@@ -1,11 +1,11 @@
 {
-  "name": "@figma/my-make-file",
+  "name": "djus-forecast-ladders",
   "private": true,
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite"
+    "build": "npx vite build",
+    "dev": "npx vite"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
