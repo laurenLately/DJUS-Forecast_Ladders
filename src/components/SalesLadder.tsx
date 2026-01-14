@@ -53,7 +53,7 @@ const getMetricCategories = (): Array<{ key: keyof CategoryMetrics; label: strin
   ];
 };
 
-\
+
 type RetailerRow = { retailer: string; product?: string; category: string; itemNumber: string };
 
 // Parse CSV data (robust to BOM + header casing/order)
@@ -349,7 +349,7 @@ export function SalesLadder() {
     alert('Export functionality would download CSV/Excel file');
   };
 
-  const saveData = () => {
+    const saveData = () => {
     // Apply edited cells back to data
     const newData = data.map(d => {
       if (d.retailer === selectedRetailer && d.category === selectedCategory) {
@@ -363,9 +363,10 @@ export function SalesLadder() {
             const itemMetrics = newWeekMap.get(selectedItem);
             if (itemMetrics) {
               const newItemMetrics = { ...itemMetrics };
-              const locationMetrics = newItemMetrics[location];
+              const locationKey = location as keyof CategoryMetrics;
+              const locationMetrics = newItemMetrics[locationKey];
               if (locationMetrics) {
-                newItemMetrics[location] = {
+                newItemMetrics[locationKey] = {
                   ...locationMetrics,
                   [field]: value
                 };
@@ -384,7 +385,7 @@ export function SalesLadder() {
     toast.success('Data saved successfully!');
   };
 
-  const handleCellEdit = (weekNum: number, location: string, field: 'planUnits' | 'suggestedPlanUnits', value: string) => {
+  const handleCellEdit = (weekNum: number, location: keyof CategoryMetrics, field: 'planUnits' | 'suggestedPlanUnits', value: string) => {
     const numValue = parseInt(value) || 0;
     const key = `${weekNum}|${location}|${field}`;
     const newEditedCells = new Map(editedCells);
@@ -392,7 +393,7 @@ export function SalesLadder() {
     setEditedCells(newEditedCells);
   };
 
-  const getCellValue = (weekNum: number, location: string, field: 'planUnits' | 'suggestedPlanUnits', originalValue: number): number => {
+  const getCellValue = (weekNum: number, location: keyof CategoryMetrics, field: 'planUnits' | 'suggestedPlanUnits', originalValue: number): number => {
     const key = `${weekNum}|${location}|${field}`;
     return editedCells.get(key) ?? originalValue;
   };
