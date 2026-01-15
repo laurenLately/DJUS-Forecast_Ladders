@@ -4,5 +4,7 @@
   "scripts": {
     "start":"func start"
   },
-  "dependencies":{}
+  "dependencies":{
+    "snowflake-sdk":"^1.10.0"
+  }
 }
