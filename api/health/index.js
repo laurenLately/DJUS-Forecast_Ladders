@@ -1,4 +1,4 @@
-module.exports=asynce function (context, req) {
+module.exports = async function (context, req) {
   context.res = {
     status: 200,
     headers: { "Content-Type": "application/json"},
