@@ -632,7 +632,7 @@ export function SalesLadder() {
             <div className="flex-1 min-w-[250px]">
               <label className="text-sm font-medium mb-1 block">
                 Item Number <span className="text-red-500">*</span>
-              </label>
+              </div>
               <Select
                 value={selectedItem}
                 onValueChange={(value) => {
