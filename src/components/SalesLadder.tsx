@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Download, Filter, AlertCircle, Save, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -606,7 +605,7 @@ export function SalesLadder() {
               </div>
             )}
 
-            <label className="flex-1 min-w-[250px]">
+            <div className="flex-1 min-w-[250px]">
               <label className="text-sm font-medium mb-1 block">
                 Product Category <span className="text-red-500">*</span>
               </label>
@@ -632,7 +631,7 @@ export function SalesLadder() {
             <div className="flex-1 min-w-[250px]">
               <label className="text-sm font-medium mb-1 block">
                 Item Number <span className="text-red-500">*</span>
-              </div>
+              </label>
               <Select
                 value={selectedItem}
                 onValueChange={(value) => {
