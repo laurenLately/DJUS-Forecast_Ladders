@@ -137,7 +137,7 @@ const [selectedRetailer, setSelectedRetailer] = useState<string>(''); const [sel
 
 const [editedCells, setEditedCells] = useState<Map<string, number>>(new Map());
 
-useEffect(() => { const loadOptions = async () => { setLoadingOptions(true); try { const rows = await fetchOptionsFromApi(); setOptions(rows); toast.success(Loaded ${rows.length} option rows from Snowflake); } catch (e: any) { console.error(e); setOptions([]); toast.error(e?.message ?? 'Failed to load dropdown options'); } finally { setLoadingOptions(false); } };
+useEffect(() => { const loadOptions = async () => { setLoadingOptions(true); try { const rows = await fetchOptionsFromApi(); setOptions(rows); toast.success('Loaded' ${rows.length} option 'rows from Snowflake'); } catch (e: any) { console.error(e); setOptions([]); toast.error(e?.message ?? 'Failed to load dropdown options'); } finally { setLoadingOptions(false); } };
 
 loadOptions();
 
