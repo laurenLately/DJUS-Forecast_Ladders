@@ -18,7 +18,10 @@ type OptionRow = { retailer: string;
                   retailerItemId: string; 
                   dorelItem?: string;  };
 
-const fetchOptionsFromApi = async (): Promise<OptionRow[]> => { const resp = await fetch('/api/options', { cache: 'no-cache' }); if (!resp.ok) { const text = await resp.text(); throw new Error(Options API ${resp.status}: ${text}); } const json = await resp.json(); const rows = (json.rows ?? json.data ?? json ?? []) as any[];
+const fetchOptionsFromApi = async (): Promise<OptionRow[]> => { const resp = await fetch('/api/options', { cache: 'no-cache' }); 
+                                                               if (!resp.ok) { const text = await resp.text();   throw new Error(`API ${resp.status}: ${text}`);}
+                                                               const json = await resp.json(); 
+                                                               const rows = (json.rows ?? json.data ?? json ?? []) as any[];
 
 // Normalize keys defensively (supports multiple backend shapes) 
                                                                return rows .map((r) => ({ retailer: String(r.retailer ?? r.RETAILER ?? '').trim(), category: (r.category ?? r.ULTRAGROUP_DESC1 ?? r.ultragroup_desc1 ?? undefined) as string | undefined, retailerItemId: String(r.retailerItemId ?? r.RETAILER_ITEM_ID ?? r.retailer_item_id ?? '').trim(), dorelItem: (r.dorelItem ?? r.DOrel_Item ?? r.DOREL_ITEM ?? r.dorel_item ?? undefined) as string | undefined, product: (r.product ?? r.PRODUCT ?? r.product_line ?? undefined) as string | undefined, })) .filter((r) => r.retailer && r.retailerItemId); };
@@ -140,7 +143,7 @@ loadOptions();
 
 }, []);
 
-// Product dimension removed (no CSV-based product line). Add back later if your options API includes it.
+
 
 const hasProductDimension = false;
 
@@ -156,7 +159,7 @@ const categories = useMemo(() => {
 if (!selectedRetailer) return [];
 const filtered = options.filter(r => r.retailer === selectedRetailer);
 
-// ULTRAGROUP_DESC1 may be null for some items; keep them visible under a bucket.
+
 const unique = Array.from(new Set(filtered.map(r => (r.category ?? '').trim() || 'Uncategorized')));
 return unique.sort();
 
