@@ -1,10 +1,10 @@
-{ "name":"djus-forecast-ladders-api",
-  "version":"1.0.0",
+{
+  "name": "dj-forecast-ladders-api",
+  "version": "1.0.0",
   "private": true,
-  "scripts": {
-    "start":"func start"
-  },
-  "dependencies":{
-    "snowflake-sdk":"^1.10.0"
+  "main": "index.js",
+  "type": "commonjs",
+  "dependencies": {
+    "snowflake-sdk": "^1.12.0"
   }
 }
