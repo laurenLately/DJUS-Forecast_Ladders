@@ -69,7 +69,7 @@ const fetchOptionsFromApi = async (): Promise<OptionRow[]> => {
       dorelItem: (r.dorelItem ?? r.DOREL_ITEM ?? r.dorel_item ?? undefined) as string | undefined,
       product: (r.product ?? r.PRODUCT ?? r.product_line ?? undefined) as string | undefined,
     }))
-    .filter((r) => r.retailer && r.retailerItemId);
+    .filter((r) => r.retailer && r.dorel_item);
 };
 
 // ---------- Ladder helpers ----------
@@ -419,10 +419,7 @@ export function SalesLadder() {
 
   const pageLoading = loadingOptions;
 
-  // NOTE:
-  // You said the JSX below already exists in your file.
-  // Keep your existing JSX exactly as-is.
-  // The only required code changes are above.
+
 
   return (
     <div className="w-full h-screen flex flex-col bg-gray-50 p-6">
