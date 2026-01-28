@@ -1,611 +1,418 @@
-import React, { useState, useMemo, useEffect } from 'react'; import { ChevronLeft, ChevronRight, Download, Filter, AlertCircle, Save, Loader2 } from 'lucide-react'; import { Button } from './ui/button'; import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'; import { Input } from './ui/input'; import { Badge } from './ui/badge'; import { Card, CardContent, CardHeader, CardTitle } from './ui/card'; import { Alert, AlertDescription } from './ui/alert'; import { toast } from 'sonner';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, Download, Filter, AlertCircle, Save, Loader2 } from 'lucide-react';
+import { Button } from './ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Input } from './ui/input';
+import { Badge } from './ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Alert, AlertDescription } from './ui/alert';
+import { toast } from 'sonner';
 
 interface WeekData { weekNum: number; weekStart: Date; weekEnd: Date; }
-
 interface MetricData { actualUnitsLY: number; actualUnits: number; retailerForecastUnits: number; planUnits: number; suggestedPlanUnits: number; }
+interface CategoryMetrics {
+  units: MetricData;
+  dollars: MetricData;
+  inventory: MetricData;
+  inventoryCost: MetricData;
+  plannedSales: MetricData;
+  plannedSalesReceipts: MetricData;
+  weeksOfSupply: MetricData;
+}
 
-interface CategoryMetrics { units: MetricData; dollars: MetricData; inventory: MetricData; inventoryCost: MetricData; plannedSales: MetricData; plannedSalesReceipts: MetricData; weeksOfSupply: MetricData; }
-
-// Generate 7 metric categories for 5 metrics each = 35 total columns 
-const getMetricCategories = (): Array<{ key: keyof CategoryMetrics; label: string }> => { return [ { key: 'units', label: 'Units' }, { key: 'dollars', label: 'Dollars' }, { key: 'inventory', label: 'Inventory' }, { key: 'inventoryCost', label: 'Inventory Cost' }, { key: 'plannedSales', label: 'Planned Sales' }, { key: 'plannedSalesReceipts', label: 'Planned Sales Receipts' }, { key: 'weeksOfSupply', label: 'Weeks of Supply' } ]; };
+const getMetricCategories = (): Array<{ key: keyof CategoryMetrics; label: string }> => ([
+  { key: 'units', label: 'Units' },
+  { key: 'dollars', label: 'Dollars' },
+  { key: 'inventory', label: 'Inventory' },
+  { key: 'inventoryCost', label: 'Inventory Cost' },
+  { key: 'plannedSales', label: 'Planned Sales' },
+  { key: 'plannedSalesReceipts', label: 'Planned Sales Receipts' },
+  { key: 'weeksOfSupply', label: 'Weeks of Supply' },
+]);
 
 type ItemOption = { value: string; label: string };
 
 // ---------- Dropdown options (from Snowflake via API) ----------
+type OptionRow = {
+  retailer: string;
+  category?: string;
+  retailerItemId: string;
+  dorelItem?: string;
+  product?: string;
+};
 
-type OptionRow = { retailer: string; 
-                  category?: string; 
-                  retailerItemId: string; 
-                  dorelItem?: string;  };
+const fetchOptionsFromApi = async (): Promise<OptionRow[]> => {
+  const resp = await fetch('/api/options', { cache: 'no-cache' });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Options API ${resp.status}: ${text}`);
+  }
+  const json = await resp.json();
+  const rows = (json.rows ?? json.data ?? json ?? []) as any[];
 
-const fetchOptionsFromApi = async (): Promise<OptionRow[]> => { const resp = await fetch('/api/options', { cache: 'no-cache' }); 
-                                                               if (!resp.ok) { const text = await resp.text();   throw new Error(`API ${resp.status}: ${text}`);}
-                                                               const json = await resp.json(); 
-                                                               const rows = (json.rows ?? json.data ?? json ?? []) as any[];
+  // Normalize keys defensively (supports multiple backend shapes)
+  return rows
+    .map((r) => ({
+      retailer: String(r.retailer ?? r.RETAILER ?? '').trim(),
+      category: (r.category ?? r.ULTRAGROUP_DESC1 ?? r.ultragroup_desc1 ?? undefined) as string | undefined,
+      retailerItemId: String(r.retailerItemId ?? r.RETAILER_ITEM_ID ?? r.retailer_item_id ?? '').trim(),
+      dorelItem: (r.dorelItem ?? r.DOREL_ITEM ?? r.dorel_item ?? undefined) as string | undefined,
+      product: (r.product ?? r.PRODUCT ?? r.product_line ?? undefined) as string | undefined,
+    }))
+    .filter((r) => r.retailer && r.retailerItemId);
+};
 
-// Normalize keys defensively (supports multiple backend shapes) 
-                                                               return rows .map((r) => ({ retailer: String(r.retailer ?? r.RETAILER ?? '').trim(), category: (r.category ?? r.ULTRAGROUP_DESC1 ?? r.ultragroup_desc1 ?? undefined) as string | undefined, retailerItemId: String(r.retailerItemId ?? r.RETAILER_ITEM_ID ?? r.retailer_item_id ?? '').trim(), dorelItem: (r.dorelItem ?? r.DOrel_Item ?? r.DOREL_ITEM ?? r.dorel_item ?? undefined) as string | undefined, product: (r.product ?? r.PRODUCT ?? r.product_line ?? undefined) as string | undefined, })) .filter((r) => r.retailer && r.retailerItemId); };
-
-// ---------- Ladder API types + normalization ----------
-
-
-type LadderApiRow = { weekNum?: number; week_num?: number; week?: number; weekEnd?: string; week_end?: string; weekEnding?: string; metrics?: CategoryMetrics; categoryMetrics?: CategoryMetrics;  [key: string]: any; };
-
+// ---------- Ladder helpers ----------
+type LadderApiRow = {
+  weekNum?: number; week_num?: number; week?: number;
+  weekEnd?: string; week_end?: string; weekEnding?: string;
+  metrics?: CategoryMetrics; categoryMetrics?: CategoryMetrics;
+  [key: string]: any;
+};
 type LadderApiResponse = { rows?: LadderApiRow[]; data?: LadderApiRow[]; };
 
-const emptyMetricData = (): MetricData => ({ actualUnitsLY: 0, actualUnits: 0, retailerForecastUnits: 0, planUnits: 0, suggestedPlanUnits: 0 });
-
-const emptyCategoryMetrics = (): CategoryMetrics => ({ units: emptyMetricData(), dollars: emptyMetricData(), inventory: emptyMetricData(), inventoryCost: emptyMetricData(), plannedSales: emptyMetricData(), plannedSalesReceipts: emptyMetricData(), weeksOfSupply: emptyMetricData() });
-
-const pickNumber = (obj: any, keys: string[], fallback = 0): number => { for (const k of keys) { const v = obj?.[k]; if (v === 0) return 0; if (v !== undefined && v !== null && v !== '') { const n = Number(v); if (!Number.isNaN(n)) return n; } } return fallback; };
-
-
-const normalizeRowToCategoryMetrics = (row: any): CategoryMetrics => { const direct = row?.metrics ?? row?.categoryMetrics; if (direct) return direct as CategoryMetrics;
-
-const n = (v: any) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-
-const unitPrice = n(row.ITEM_AMOUNT);
-
-const actualUnitsLY = n(row.ACTUAL_UNITS_LY); const actualUnits = n(row.ACTUAL_UNITS); const fcstUnits = n(row.WEEKLY_FORECAST_UNITS); const planUnits = n(row.PLAN_UNITS); const suggUnits = n(row.SUGGESTED_PLAN_UNITS);
-
-const actualDollarsLY = n(row.ACTUAL_DOLLARS_LY); const actualDollars = n(row.ACTUAL_DOLLARS); const forecastDollars = row.FORECAST_DOLLARS !== undefined && row.FORECAST_DOLLARS !== null && row.FORECAST_DOLLARS !== '' ? n(row.FORECAST_DOLLARS) : n(fcstUnits * unitPrice);
-
-const planDollars = n(planUnits * unitPrice); const suggestedDollars = n(suggUnits * unitPrice);
-
-return { units: { actualUnitsLY, actualUnits, retailerForecastUnits: fcstUnits, planUnits, suggestedPlanUnits: suggUnits, },
-
-dollars: {
-  actualUnitsLY: actualDollarsLY,
-  actualUnits: actualDollars,
-  retailerForecastUnits: forecastDollars,
-  planUnits: planDollars,
-  suggestedPlanUnits: suggestedDollars,
-},
-
-inventory: {
-  actualUnitsLY: n(row.ACTUAL_UNIT_INV_LY),
-  actualUnits: n(row.ACTUAL_UNIT_INV),
-  retailerForecastUnits: n(row.FORECAST_UNIT_INVENTORY),
-  planUnits: n(row.PLAN_UNIT_INVENTORY),
-  suggestedPlanUnits: n(row.SUGGESTED_PLAN_UNIT_INVENTORY),
-},
-
-// No true cost fields in the view; keep 0 until you add cost columns.
-inventoryCost: {
-  actualUnitsLY: 0,
-  actualUnits: 0,
-  retailerForecastUnits: 0,
-  planUnits: 0,
-  suggestedPlanUnits: 0,
-},
-
-// Not currently provided in the view; keep 0 until you define it.
-plannedSales: {
-  actualUnitsLY: 0,
-  actualUnits: 0,
-  retailerForecastUnits: 0,
-  planUnits: 0,
-  suggestedPlanUnits: 0,
-},
-
-// These are unit receipts (not dollars). If you later add dollar receipts, we can split/rename.
-plannedSalesReceipts: {
-  actualUnitsLY: 0,
-  actualUnits: 0,
-  retailerForecastUnits: n(row.FORECAST_UNIT_RECEIPTS),
-  planUnits: n(row.PLAN_UNIT_RECEIPTS),
-  suggestedPlanUnits: n(row.SUGGESTED_PLAN_UNIT_RECEIPTS),
-},
-
-// WOS is a single value; we mirror into forecast/plan/suggested to fit the 5-metric grid.
-weeksOfSupply: {
-  actualUnitsLY: 0,
-  actualUnits: 0,
-  retailerForecastUnits: n(row.WOS),
-  planUnits: n(row.WOS),
-  suggestedPlanUnits: n(row.WOS),
-},
-
-}; };
-
-const getWeekNumFromRow = (row: LadderApiRow): number => { return ( pickNumber(row, ['weekNum', 'week_num', 'week', 'week_number'], 0) || 0 ); };
-
-const generateWeeks = (): WeekData[] => { const weeks: WeekData[] = []; const startDate = new Date('2026-01-05');
-
-for (let i = 0; i < 52; i++) { const weekStart = new Date(startDate); weekStart.setDate(startDate.getDate() + i * 7);
-
-const weekEnd = new Date(weekStart);
-weekEnd.setDate(weekStart.getDate() + 6);
-
-weeks.push({
-  weekNum: i + 1,
-  weekStart,
-  weekEnd
+const emptyMetricData = (): MetricData => ({
+  actualUnitsLY: 0, actualUnits: 0, retailerForecastUnits: 0, planUnits: 0, suggestedPlanUnits: 0,
 });
 
-}
-
-return weeks; };
-
-export function SalesLadder() { const [options, setOptions] = useState<OptionRow[]>([]);
-
-const [ladderByWeek, setLadderByWeek] = useState<Map<number, CategoryMetrics>>(new Map()); const [ladderLoading, setLadderLoading] = useState(false); const [ladderError, setLadderError] = useState<string | null>(null);
-
-const [loadingOptions, setLoadingOptions] = useState(true); const [weeks] = useState<WeekData[]>(generateWeeks()); const [metricCategories] = useState(getMetricCategories()); const NO_PRODUCT_LABEL = '(No product)';
-
-const [selectedRetailer, setSelectedRetailer] = useState<string>(''); const [selectedProduct, setSelectedProduct] = useState<string>(''); const [selectedCategory, setSelectedCategory] = useState<string>(''); const [selectedItem, setSelectedItem] = useState<string>('');
-
-const [editedCells, setEditedCells] = useState<Map<string, number>>(new Map());
-
-useEffect(() => { const loadOptions = async () => { setLoadingOptions(true); try { const rows = await fetchOptionsFromApi(); setOptions(rows); toast.success('Loaded ${rows.length} option rows from Snowflake'); } catch (e: any) { console.error(e); setOptions([]); toast.error(e?.message ?? 'Failed to load dropdown options'); } finally { setLoadingOptions(false); } };
-
-loadOptions();
-
-}, []);
-
-
-
-const hasProductDimension = false;
-
-const retailers = useMemo(() => {
-const unique = Array.from(new Set(options.map(r => r.retailer).filter(Boolean)));
-return unique.sort();
-
-}, [options]);
-
-const products: string[] = [];
-
-const categories = useMemo(() => {
-if (!selectedRetailer) return [];
-const filtered = options.filter(r => r.retailer === selectedRetailer);
-
-
-const unique = Array.from(new Set(filtered.map(r => (r.category ?? '').trim() || 'Uncategorized')));
-return unique.sort();
-
-}, [options, selectedRetailer]);
-
-const itemOptions = useMemo<ItemOption[]>(() => {
-if (!selectedRetailer || !selectedCategory) return [];
-
-const filtered = options.filter(r => {
-  if (r.retailer !== selectedRetailer) return false;
-  const cat = (r.category ?? '').trim() || 'Uncategorized';
-  return cat === selectedCategory;
+const emptyCategoryMetrics = (): CategoryMetrics => ({
+  units: emptyMetricData(),
+  dollars: emptyMetricData(),
+  inventory: emptyMetricData(),
+  inventoryCost: emptyMetricData(),
+  plannedSales: emptyMetricData(),
+  plannedSalesReceipts: emptyMetricData(),
+  weeksOfSupply: emptyMetricData(),
 });
 
-const map = new Map<string, string | undefined>();
-for (const r of filtered) {
-  const retailerItem = (r.retailerItemId ?? '').trim();
-  if (!retailerItem) continue;
-  const existing = map.get(retailerItem);
-  const dorel = (r.dorelItem ?? '').trim();
-
-  if ((!existing || existing.length === 0) && dorel) map.set(retailerItem, dorel);
-  else if (!map.has(retailerItem)) map.set(retailerItem, dorel || undefined);
-}
-
-return Array.from(map.entries())
-  .map(([retailerItem, dorelItem]) => ({
-    value: retailerItem,
-    label: dorelItem ? `${retailerItem} / ${dorelItem}` : retailerItem
-  }))
-  .sort((a, b) => a.label.localeCompare(b.label));
-
-}, [options, selectedRetailer, selectedCategory]);
-
-const unique = Array.from(new Set(filtered.map(r => `${r.itemNumber}${r.dorelItem ? ` | ${r.dorelItem}` : ''}`)));
-return unique.sort();
-
-}, [optionsRows, selectedRetailer, selectedCategory, hasProductDimension, selectedProduct]);
-
-const hasRequiredSelections = Boolean(selectedRetailer) && (!hasProductDimension || Boolean(selectedProduct)) && Boolean(selectedCategory) && Boolean(selectedItem);
-
-useEffect(() => { const fetchLadder = async () => { if (!hasRequiredSelections) { setLadderByWeek(new Map()); setLadderError(null); setEditedCells(new Map()); return; }
-
-setLadderLoading(true);
-  setLadderError(null);
-
-  try {
-    const url =
-
-/api/ladder?retailer=${encodeURIComponent(selectedRetailer)} + &item=${encodeURIComponent(selectedItem)} + (hasProductDimension ? &product=${encodeURIComponent(selectedProduct)} : '');
-
-const resp = await fetch(url, { cache: 'no-cache' });
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`API ${resp.status}: ${text}`);
-    }
-
-    const json = (await resp.json()) as LadderApiResponse;
-    const rows = (json.rows ?? json.data ?? []) as LadderApiRow[];
-
-    if (!rows.length) {
-      setLadderByWeek(new Map());
-      toast.warning('No ladder rows returned for that selection.');
-      return;
-    }
-
-    const byWeek = new Map<number, CategoryMetrics>();
-    for (const r of rows) {
-      const wk = getWeekNumFromRow(r);
-      if (!wk) continue;
-      byWeek.set(wk, normalizeRowToCategoryMetrics(r));
-    }
-
-      for (const w of weeks) {
-      if (!byWeek.has(w.weekNum)) byWeek.set(w.weekNum, emptyCategoryMetrics());
-    }
-
-    setLadderByWeek(byWeek);
-    toast.success(`Loaded ladder data (${rows.length} rows)`);
-  } catch (e: any) {
-    console.error(e);
-    setLadderByWeek(new Map());
-    setLadderError(e?.message ?? 'Failed to load ladder data');
-    toast.error(e?.message ?? 'Failed to load ladder data');
-  } finally {
-    setLadderLoading(false);
-  }
+const pickNumber = (obj: any, keys: string[], fallback = 0): number => {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v === 0) return 0;
+    if (v !== undefined && v !== null && v !== '') {
+      const n = Number(v);
+      if (!Number.isNaN(n)) return n;
+    }
+  }
+  return fallback;
 };
 
-fetchLadder();
-// eslint-disable-next-line react-hooks/exhaustive-deps
+const normalizeRowToCategoryMetrics = (row: any): CategoryMetrics => {
+  const direct = row?.metrics ?? row?.categoryMetrics;
+  if (direct) return direct as CategoryMetrics;
 
-}, [hasRequiredSelections, selectedRetailer, selectedProduct, selectedCategory, selectedItem]);
+  const n = (v: any) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
 
-const formatWeekDate = (date: Date) => { return ${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear().toString().slice(2)}; };
+  const unitPrice = n(row.ITEM_AMOUNT);
 
-const getVariancePercent = (current: number, previous: number) => { if (previous === 0) return 0; return ((current - previous) / previous) * 100; };
+  const actualUnitsLY = n(row.ACTUAL_UNITS_LY);
+  const actualUnits = n(row.ACTUAL_UNITS);
+  const fcstUnits = n(row.WEEKLY_FORECAST_UNITS);
+  const planUnits = n(row.PLAN_UNITS);
+  const suggUnits = n(row.SUGGESTED_PLAN_UNITS);
 
-const getVarianceColor = (variance: number) => { if (variance > 5) return 'text-green-600'; if (variance < -5) return 'text-red-600'; return 'text-gray-600'; };
+  const actualDollarsLY = n(row.ACTUAL_DOLLARS_LY);
+  const actualDollars = n(row.ACTUAL_DOLLARS);
+  const forecastDollars =
+    row.FORECAST_DOLLARS !== undefined && row.FORECAST_DOLLARS !== null && row.FORECAST_DOLLARS !== ''
+      ? n(row.FORECAST_DOLLARS)
+      : n(fcstUnits * unitPrice);
 
-const exportData = () => { alert('Export functionality would download CSV/Excel file'); };
+  const planDollars = n(planUnits * unitPrice);
+  const suggestedDollars = n(suggUnits * unitPrice);
 
-const saveData = () => { // NOTE: This currently only applies edits locally. // For real ladder editing, post changes to an API endpoint (e.g., /api/ladder/save).
-
-if (!hasRequiredSelections) return;
-
-const newByWeek = new Map(ladderByWeek);
-
-editedCells.forEach((value, key) => {
-  const [weekStr, location, field] = key.split('|');
-  const weekNum = parseInt(weekStr);
-  const existing = newByWeek.get(weekNum) ?? emptyCategoryMetrics();
-
-  const locationKey = location as keyof CategoryMetrics;
-  const locationMetrics = existing[locationKey];
-
-  const updated: CategoryMetrics = {
-    ...existing,
-    [locationKey]: {
-      ...locationMetrics,
-      [field]: value
-    }
-  };
-
-  newByWeek.set(weekNum, updated);
-});
-
-setLadderByWeek(newByWeek);
-setEditedCells(new Map());
-toast.success('Edits saved locally (API save not implemented yet).');
-
+  return {
+    units: { actualUnitsLY, actualUnits, retailerForecastUnits: fcstUnits, planUnits, suggestedPlanUnits: suggUnits },
+    dollars: {
+      actualUnitsLY: actualDollarsLY,
+      actualUnits: actualDollars,
+      retailerForecastUnits: forecastDollars,
+      planUnits: planDollars,
+      suggestedPlanUnits: suggestedDollars,
+    },
+    inventory: {
+      actualUnitsLY: n(row.ACTUAL_UNIT_INV_LY),
+      actualUnits: n(row.ACTUAL_UNIT_INV),
+      retailerForecastUnits: n(row.FORECAST_UNIT_INVENTORY),
+      planUnits: n(row.PLAN_UNIT_INVENTORY),
+      suggestedPlanUnits: n(row.SUGGESTED_PLAN_UNIT_INVENTORY),
+    },
+    inventoryCost: { actualUnitsLY: 0, actualUnits: 0, retailerForecastUnits: 0, planUnits: 0, suggestedPlanUnits: 0 },
+    plannedSales: { actualUnitsLY: 0, actualUnits: 0, retailerForecastUnits: 0, planUnits: 0, suggestedPlanUnits: 0 },
+    plannedSalesReceipts: {
+      actualUnitsLY: 0, actualUnits: 0,
+      retailerForecastUnits: n(row.FORECAST_UNIT_RECEIPTS),
+      planUnits: n(row.PLAN_UNIT_RECEIPTS),
+      suggestedPlanUnits: n(row.SUGGESTED_PLAN_UNIT_RECEIPTS),
+    },
+    weeksOfSupply: {
+      actualUnitsLY: 0, actualUnits: 0,
+      retailerForecastUnits: n(row.WOS), planUnits: n(row.WOS), suggestedPlanUnits: n(row.WOS),
+    },
+  };
 };
 
-const handleCellEdit = ( weekNum: number, location: keyof CategoryMetrics, field: 'planUnits' | 'suggestedPlanUnits', value: string ) => { const numValue = parseInt(value) || 0; const key = ${weekNum}|${location}|${field}; const newEditedCells = new Map(editedCells); newEditedCells.set(key, numValue); setEditedCells(newEditedCells); };
+const getWeekNumFromRow = (row: LadderApiRow): number =>
+  (pickNumber(row, ['weekNum', 'week_num', 'week', 'week_number'], 0) || 0);
 
-const getCellValue = ( weekNum: number, location: keyof CategoryMetrics, field: 'planUnits' | 'suggestedPlanUnits', originalValue: number ): number => { const key = ${weekNum}|${location}|${field}; return editedCells.get(key) ?? originalValue; };
+const generateWeeks = (): WeekData[] => {
+  const weeks: WeekData[] = [];
+  const startDate = new Date('2026-01-05');
+  for (let i = 0; i < 52; i++) {
+    const weekStart = new Date(startDate);
+    weekStart.setDate(startDate.getDate() + i * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weeks.push({ weekNum: i + 1, weekStart, weekEnd });
+  }
+  return weeks;
+};
 
-const currentData = useMemo(() => { if (!hasRequiredSelections) return null; return ladderByWeek; }, [hasRequiredSelections, ladderByWeek]);
+export function SalesLadder() {
+  // Dropdown options (from Snowflake via API)
+  const [options, setOptions] = useState<OptionRow[]>([]);
 
-const pageLoading = loadingOptions;
+  // Ladder grid data (from Snowflake via API)
+  const [ladderByWeek, setLadderByWeek] = useState<Map<number, CategoryMetrics>>(new Map());
+  const [ladderLoading, setLadderLoading] = useState(false);
+  const [ladderError, setLadderError] = useState<string | null>(null);
 
-return ( <div className="w-full h-screen flex flex-col bg-gray-50 p-6"> <Card className="flex-1 flex flex-col"> <CardHeader className="border-b"> <div className="flex items-center justify-between"> <CardTitle className="text-2xl">Sales Ladder Plan - 52 Week View</CardTitle> <div className="flex gap-2"> <Button onClick={exportData} variant="outline" size="sm" disabled={!hasRequiredSelections || ladderLoading}> <Download className="w-4 h-4 mr-2" /> Export </Button> <Button onClick={saveData} variant="outline" size="sm" disabled={!hasRequiredSelections || ladderLoading}> <Save className="w-4 h-4 mr-2" /> Save </Button> </div> </div>
+  // UI state
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [weeks] = useState<WeekData[]>(generateWeeks());
+  const [metricCategories] = useState(getMetricCategories());
+  const NO_PRODUCT_LABEL = '(No product)';
 
-<div className="flex gap-4 mt-4 flex-wrap">
-        <div className="flex-1 min-w-[250px]">
-          <label className="text-sm font-medium mb-1 block">
-            Retailer <span className="text-red-500">*</span>
-          </label>
-          <Select
-            value={selectedRetailer}
-            onValueChange={(value) => {
-              setSelectedRetailer(value);
-              setSelectedProduct('');
-              setSelectedCategory('');
-              setSelectedItem('');
-            }}
-          >
-            <SelectTrigger className={!selectedRetailer ? 'border-red-300' : ''}>
-              <SelectValue placeholder={pageLoading ? 'Loading...' : 'Select Retailer (Required)'} />
-            </SelectTrigger>
-            <SelectContent>
-              {retailers.map(r => (
-                <SelectItem key={r} value={r}>{r}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+  const [selectedRetailer, setSelectedRetailer] = useState<string>('');
+  const [selectedProduct, setSelectedProduct] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [selectedItem, setSelectedItem] = useState<string>('');
 
-        
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+  const [editedCells, setEditedCells] = useState<Map<string, number>>(new Map());
 
-        <div className="flex-1 min-w-[250px]">
-          <label className="text-sm font-medium mb-1 block">
-            Product Category <span className="text-red-500">*</span>
-          </label>
-          <Select
-            value={selectedCategory}
-            onValueChange={(value) => {
-              setSelectedCategory(value);
-              setSelectedItem('');
-            }}
-            disabled={!selectedRetailer || (hasProductDimension && !selectedProduct)}
-          >
-            <SelectTrigger className={!selectedCategory && selectedRetailer ? 'border-red-300' : ''}>
-              <SelectValue placeholder="Select Category (Required)" />
-            </SelectTrigger>
-            <SelectContent>
-              {categories.map(c => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+  useEffect(() => {
+    const loadOptions = async () => {
+      setLoadingOptions(true);
+      try {
+        const rows = await fetchOptionsFromApi();
+        setOptions(rows);
+        toast.success(`Loaded ${rows.length} option rows from Snowflake`);
+      } catch (e: any) {
+        console.error(e);
+        setOptions([]);
+        toast.error(e?.message ?? 'Failed to load dropdown options');
+      } finally {
+        setLoadingOptions(false);
+      }
+    };
+    loadOptions();
+  }, []);
 
-        <div className="flex-1 min-w-[250px]">
-          <label className="text-sm font-medium mb-1 block">
-            Item Number <span className="text-red-500">*</span>
-          </label>
-          <Select
-            value={selectedItem}
-            onValueChange={(value) => {
-              // value is "retailerItem \ dorelItem" or just retailerItem
-              const retailerItem = value.split('\')[0].trim();
-              setSelectedItem(retailerItem);
-            }}
-            disabled={!selectedRetailer || !selectedCategory || (hasProductDimension && !selectedProduct)}
-          >
-            <SelectTrigger className={!selectedItem && selectedCategory ? 'border-red-300' : ''}>
-              <SelectValue placeholder="Select Item (Required)" />
-            </SelectTrigger>
-            <SelectContent>
-              {itemOptions.map(o => (
-                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+  // Product dimension removed (no CSV-based product line). Add back later if your options API includes it.
+  const hasProductDimension = false;
 
-      {hasRequiredSelections && currentData && !ladderLoading && !ladderError && (
-        <div className="flex items-center justify-between mt-4">
-          <Badge variant="secondary">52 weeks × 35 metrics = 1,820 data points</Badge>
-          <div className="text-sm text-gray-600">Total Columns: 36 (1 Week + 35 Metrics across 7 Categories)</div>
-        </div>
-      )}
+  const retailers = useMemo(() => {
+    const unique = Array.from(new Set(options.map(r => r.retailer).filter(Boolean)));
+    return unique.sort((a, b) => a.localeCompare(b));
+  }, [options]);
 
-      {(ladderLoading || ladderError) && (
-        <div className="mt-4">
-          {ladderLoading && (
-            <Alert>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <AlertDescription className="ml-2">Loading ladder data from Snowflake…</AlertDescription>
-            </Alert>
-          )}
-          {ladderError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription className="ml-2">{ladderError}</AlertDescription>
-            </Alert>
-          )}
-        </div>
-      )}
-    </CardHeader>
+  const categories = useMemo(() => {
+    if (!selectedRetailer) return [];
+    const filtered = options.filter(r => r.retailer === selectedRetailer);
+    const unique = Array.from(new Set(filtered.map(r => (r.category ?? '').trim() || 'Uncategorized')));
+    return unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [options, selectedRetailer]);
 
-    {/*
-      NOTE:
-      The grid rendering below still expects `currentData` as Map<weekNum, CategoryMetrics>.
-      Since we now populate `ladderByWeek` from /api/ladder, the rest of your grid can remain unchanged.
+  const itemOptions = useMemo<ItemOption[]>(() => {
+    if (!selectedRetailer || !selectedCategory) return [];
+    const filtered = options.filter(r => {
+      if (r.retailer !== selectedRetailer) return false;
+      const cat = (r.category ?? '').trim() || 'Uncategorized';
+      return cat === selectedCategory;
+    });
 
-      If your original file had the big table/grid below, leave it as-is and swap references from
-      the old `currentData` to this `currentData` (same name).
-    */}
+    const map = new Map<string, string | undefined>();
+    for (const r of filtered) {
+      const retailerItem = (r.retailerItemId ?? '').trim();
+      if (!retailerItem) continue;
+      const existing = map.get(retailerItem);
+      const dorel = (r.dorelItem ?? '').trim();
 
-    <CardContent className="flex-1 overflow-auto p-0">
-      {loadingOptions ? (
-        <div className="flex items-center justify-center h-full p-8">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-            <p className="text-sm text-gray-600">Loading retailer options…</p>
-          </div>
-        </div>
-      ) : !hasRequiredSelections ? (
-        <div className="flex items-center justify-center h-full p-8">
-          <Alert className="max-w-md">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              Please select a <strong>Retailer</strong>, <strong>Product Category</strong>, and <strong>Item Number</strong> to view the sales ladder plan.
-            </AlertDescription>
-          </Alert>
-        </div>
-      ) : ladderLoading ? (
-        <div className="flex items-center justify-center h-full p-8">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-            <p className="text-sm text-gray-600">Loading ladder data from Snowflake…</p>
-          </div>
-        </div>
-      ) : ladderError ? (
-        <div className="flex items-center justify-center h-full p-8">
-          <Alert variant="destructive" className="max-w-xl">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              {ladderError}
-            </AlertDescription>
-          </Alert>
-        </div>
-      ) : (
-        <div className="overflow-auto h-full">
-          <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-white z-20">
-              {/* Main header row with location names */}
-              <tr className="border-b border-gray-300">
-                <th
-                  className="sticky left-0 bg-white border-r-2 border-gray-300 p-3 text-left font-semibold w-40 z-30"
-                  rowSpan={2}
-                >
-                  Week
-                </th>
-                {metricCategories.map((location) => (
-                  <th
-                    key={location.key}
-                    className="p-2 border-r-2 border-gray-300 text-center font-semibold bg-gray-100"
-                    colSpan={5}
-                  >
-                    <div className="text-xs">{location.label}</div>
-                  </th>
-                ))}
-              </tr>
+      if ((!existing || existing.length === 0) && dorel) map.set(retailerItem, dorel);
+      else if (!map.has(retailerItem)) map.set(retailerItem, dorel || undefined);
+    }
 
-              {/* Sub-header row with metric names */}
-              <tr className="border-b-2 border-gray-300">
-                {metricCategories.map((location) => (
-                  <React.Fragment key={location.key}>
-                    <th
-                      key={`${location.key}-ly`}
-                      className="p-2 text-[10px] bg-blue-50 border-r border-gray-200 min-w-[80px]"
-                    >
-                      Actual
-                      <br />Units LY
-                    </th>
-                    <th
-                      key={`${location.key}-actual`}
-                      className="p-2 text-[10px] bg-green-50 border-r border-gray-200 min-w-[80px]"
-                    >
-                      Actual
-                      <br />Units
-                    </th>
-                    <th
-                      key={`${location.key}-forecast`}
-                      className="p-2 text-[10px] bg-purple-50 border-r border-gray-200 min-w-[80px]"
-                    >
-                      Retailer
-                      <br />Forecast
-                    </th>
-                    <th
-                      key={`${location.key}-plan`}
-                      className="p-2 text-[10px] bg-yellow-50 border-r border-gray-200 min-w-[80px]"
-                    >
-                      Plan
-                      <br />Units
-                    </th>
-                    <th
-                      key={`${location.key}-suggested`}
-                      className="p-2 text-[10px] bg-orange-50 border-r-2 border-gray-300 min-w-[80px]"
-                    >
-                      Suggested
-                      <br />Plan
-                    </th>
-                  </React.Fragment>
-                ))}
-              </tr>
-            </thead>
+    return Array.from(map.entries())
+      .map(([retailerItem, dorelItem]) => ({
+        value: retailerItem, // value is retailer item ID only
+        label: dorelItem ? `${retailerItem} / ${dorelItem}` : retailerItem,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [options, selectedRetailer, selectedCategory]);
 
-            <tbody>
-              {weeks.map((week, rowIndex) => {
-                const weekMetrics = currentData?.get(week.weekNum);
+  const hasRequiredSelections =
+    Boolean(selectedRetailer) &&
+    (!hasProductDimension || Boolean(selectedProduct)) &&
+    Boolean(selectedCategory) &&
+    Boolean(selectedItem);
 
-                return (
-                  <tr
-                    key={week.weekNum}
-                    className={rowIndex % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50'}
-                  >
-                    <td className="sticky left-0 bg-inherit border-r-2 border-gray-300 p-3 font-medium z-10">
-                      <div className="flex flex-col">
-                        <span className="font-semibold">Week {week.weekNum}</span>
-                        <span className="text-xs text-gray-600">
-                          {formatWeekDate(week.weekStart)} - {formatWeekDate(week.weekEnd)}
-                        </span>
-                      </div>
-                    </td>
+  // Fetch ladder data when selections complete
+  useEffect(() => {
+    const fetchLadder = async () => {
+      if (!hasRequiredSelections) {
+        setLadderByWeek(new Map());
+        setLadderError(null);
+        setEditedCells(new Map());
+        return;
+      }
 
-                    {metricCategories.map((location) => {
-                      const metrics = weekMetrics?.[location.key];
-                      if (!metrics) return null;
+      setLadderLoading(true);
+      setLadderError(null);
 
-                      const planValue = getCellValue(week.weekNum, location.key, 'planUnits', metrics.planUnits);
-                      const suggestedValue = getCellValue(
-                        week.weekNum,
-                        location.key,
-                        'suggestedPlanUnits',
-                        metrics.suggestedPlanUnits
-                      );
+      try {
+        const url = `/api/ladder?retailer=${encodeURIComponent(selectedRetailer)}&item=${encodeURIComponent(selectedItem)}${
+          hasProductDimension ? `&product=${encodeURIComponent(selectedProduct)}` : ''
+        }`;
 
-                      return (
-                        <React.Fragment key={`${week.weekNum}-${location.key}`}>
-                          <td className="p-1 text-xs border-r border-gray-100 text-center">
-                            {metrics.actualUnitsLY.toLocaleString()}
-                          </td>
-                          <td className="p-1 text-xs border-r border-gray-100 text-center font-medium">
-                            {metrics.actualUnits > 0 ? metrics.actualUnits.toLocaleString() : '-'}
-                          </td>
-                          <td className="p-1 text-xs border-r border-gray-100 text-center">
-                            {metrics.retailerForecastUnits.toLocaleString()}
-                          </td>
-                          <td className="p-1 border-r border-gray-100">
-                            <Input
-                              type="number"
-                              value={planValue}
-                              onChange={(e) => handleCellEdit(week.weekNum, location.key, 'planUnits', e.target.value)}
-                              className="h-7 text-xs text-center border-yellow-200 bg-yellow-50/50 focus:bg-yellow-50"
-                            />
-                          </td>
-                          <td className="p-1 border-r-2 border-gray-300">
-                            <Input
-                              type="number"
-                              value={suggestedValue}
-                              onChange={(e) =>
-                                handleCellEdit(week.weekNum, location.key, 'suggestedPlanUnits', e.target.value)
-                              }
-                              className="h-7 text-xs text-center border-orange-200 bg-orange-50/50 focus:bg-orange-50"
-                            />
-                          </td>
-                        </React.Fragment>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </CardContent>
-  </Card>
+        const resp = await fetch(url, { cache: 'no-cache' });
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(`API ${resp.status}: ${text}`);
+        }
 
-  <div className="mt-4 flex justify-center gap-6 text-xs">
-    <div className="flex items-center gap-2">
-      <div className="w-4 h-4 bg-blue-50 border border-gray-300"></div>
-      <span>LY = Last Year</span>
-    </div>
-    <div className="flex items-center gap-2">
-      <div className="w-4 h-4 bg-green-50 border border-gray-300"></div>
-      <span>CY = Current Year</span>
-    </div>
-    <div className="flex items-center gap-2">
-      <div className="w-4 h-4 bg-purple-50 border border-gray-300"></div>
-      <span>N3W = Next 3 Weeks Forecast</span>
-    </div>
-    <div className="flex items-center gap-2">
-      <div className="w-4 h-4 bg-orange-50 border border-gray-300"></div>
-      <span>Cust = Customer Suggested</span>
-    </div>
-  </div>
-</div>
+        const json = (await resp.json()) as LadderApiResponse;
+        const rows = (json.rows ?? json.data ?? []) as LadderApiRow[];
 
-); }
+        if (!rows.length) {
+          setLadderByWeek(new Map());
+          toast.warning('No ladder rows returned for that selection.');
+          return;
+        }
+
+        const byWeek = new Map<number, CategoryMetrics>();
+        for (const r of rows) {
+          const wk = getWeekNumFromRow(r);
+          if (!wk) continue;
+          byWeek.set(wk, normalizeRowToCategoryMetrics(r));
+        }
+
+        for (const w of weeks) {
+          if (!byWeek.has(w.weekNum)) byWeek.set(w.weekNum, emptyCategoryMetrics());
+        }
+
+        setLadderByWeek(byWeek);
+        toast.success(`Loaded ladder data (${rows.length} rows)`);
+      } catch (e: any) {
+        console.error(e);
+        setLadderByWeek(new Map());
+        setLadderError(e?.message ?? 'Failed to load ladder data');
+        toast.error(e?.message ?? 'Failed to load ladder data');
+      } finally {
+        setLadderLoading(false);
+      }
+    };
+
+    fetchLadder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasRequiredSelections, selectedRetailer, selectedProduct, selectedCategory, selectedItem]);
+
+  const formatWeekDate = (date: Date) => {
+    return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear().toString().slice(2)}`;
+  };
+
+  const getVariancePercent = (current: number, previous: number) => {
+    if (previous === 0) return 0;
+    return ((current - previous) / previous) * 100;
+  };
+
+  const getVarianceColor = (variance: number) => {
+    if (variance > 5) return 'text-green-600';
+    if (variance < -5) return 'text-red-600';
+    return 'text-gray-600';
+  };
+
+  const exportData = () => {
+    alert('Export functionality would download CSV/Excel file');
+  };
+
+  const saveData = () => {
+    if (!hasRequiredSelections) return;
+
+    const newByWeek = new Map(ladderByWeek);
+
+    editedCells.forEach((value, key) => {
+      const [weekStr, location, field] = key.split('|');
+      const weekNum = parseInt(weekStr);
+      const existing = newByWeek.get(weekNum) ?? emptyCategoryMetrics();
+
+      const locationKey = location as keyof CategoryMetrics;
+      const locationMetrics = existing[locationKey];
+
+      const updated: CategoryMetrics = {
+        ...existing,
+        [locationKey]: {
+          ...locationMetrics,
+          [field]: value,
+        },
+      };
+
+      newByWeek.set(weekNum, updated);
+    });
+
+    setLadderByWeek(newByWeek);
+    setEditedCells(new Map());
+    toast.success('Edits saved locally (API save not implemented yet).');
+  };
+
+  const handleCellEdit = (
+    weekNum: number,
+    location: keyof CategoryMetrics,
+    field: 'planUnits' | 'suggestedPlanUnits',
+    value: string
+  ) => {
+    const numValue = parseInt(value) || 0;
+    const key = `${weekNum}|${location}|${field}`;
+    const newEditedCells = new Map(editedCells);
+    newEditedCells.set(key, numValue);
+    setEditedCells(newEditedCells);
+  };
+
+  const getCellValue = (
+    weekNum: number,
+    location: keyof CategoryMetrics,
+    field: 'planUnits' | 'suggestedPlanUnits',
+    originalValue: number
+  ): number => {
+    const key = `${weekNum}|${location}|${field}`;
+    return editedCells.get(key) ?? originalValue;
+  };
+
+  const currentData = useMemo(() => {
+    if (!hasRequiredSelections) return null;
+    return ladderByWeek;
+  }, [hasRequiredSelections, ladderByWeek]);
+
+  const pageLoading = loadingOptions;
+
+  // ... (your JSX below)
+
+  return (
+    <div className="w-full h-screen flex flex-col bg-gray-50 p-6">
+      {/* ... header ... */}
+      <Card className="flex-1 flex flex-col">
+        <CardHeader className="border-b">
+          {/* Retailer select */}
+          {/* Category select */}
+          {/* Item select */}
+          {/* NOTE: onValueChange for Item uses setSelectedItem(value) directly */}
+          {/* ... */}
+        </CardHeader>
+
+        {/* ... CardContent with table grid that uses currentData ... */}
+      </Card>
+    </div>
+  );
+}
