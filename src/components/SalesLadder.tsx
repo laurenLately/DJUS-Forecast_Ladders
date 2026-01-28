@@ -8,8 +8,18 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
 import { toast } from 'sonner';
 
-interface WeekData { weekNum: number; weekStart: Date; weekEnd: Date; }
-interface MetricData { actualUnitsLY: number; actualUnits: number; retailerForecastUnits: number; planUnits: number; suggestedPlanUnits: number; }
+interface WeekData {
+  weekNum: number;
+  weekStart: Date;
+  weekEnd: Date;
+}
+interface MetricData {
+  actualUnitsLY: number;
+  actualUnits: number;
+  retailerForecastUnits: number;
+  planUnits: number;
+  suggestedPlanUnits: number;
+}
 interface CategoryMetrics {
   units: MetricData;
   dollars: MetricData;
@@ -193,6 +203,17 @@ export function SalesLadder() {
 
   const [editedCells, setEditedCells] = useState<Map<string, number>>(new Map());
 
+  // ✅ Prevent stale combinations: changing a higher-level filter clears downstream picks
+  useEffect(() => {
+    setSelectedCategory('');
+    setSelectedItem('');
+    setSelectedProduct(''); // safe even though product dimension is currently off
+  }, [selectedRetailer]);
+
+  useEffect(() => {
+    setSelectedItem('');
+  }, [selectedCategory]);
+
   useEffect(() => {
     const loadOptions = async () => {
       setLoadingOptions(true);
@@ -273,7 +294,8 @@ export function SalesLadder() {
       setLadderError(null);
 
       try {
-        const url = `/api/ladder?retailer=${encodeURIComponent(selectedRetailer)}&item=${encodeURIComponent(selectedItem)}${
+        // ✅ IMPORTANT: backend filters by retailer + retailer_item_id
+        const url = `/api/ladder?retailer=${encodeURIComponent(selectedRetailer)}&retailer_item_id=${encodeURIComponent(selectedItem)}${
           hasProductDimension ? `&product=${encodeURIComponent(selectedProduct)}` : ''
         }`;
 
@@ -397,7 +419,10 @@ export function SalesLadder() {
 
   const pageLoading = loadingOptions;
 
-  // ... (your JSX below)
+  // NOTE:
+  // You said the JSX below already exists in your file.
+  // Keep your existing JSX exactly as-is.
+  // The only required code changes are above.
 
   return (
     <div className="w-full h-screen flex flex-col bg-gray-50 p-6">
@@ -409,9 +434,42 @@ export function SalesLadder() {
           {/* Item select */}
           {/* NOTE: onValueChange for Item uses setSelectedItem(value) directly */}
           {/* ... */}
+          {ladderError ? (
+            <Alert variant="destructive" className="mt-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{ladderError}</AlertDescription>
+            </Alert>
+          ) : null}
         </CardHeader>
 
-        {/* ... CardContent with table grid that uses currentData ... */}
+        <CardContent className="flex-1 overflow-auto">
+          {/* ... CardContent with table grid that uses currentData ... */}
+          {pageLoading ? (
+            <div className="flex items-center justify-center h-full text-gray-600">
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              Loading options…
+            </div>
+          ) : !hasRequiredSelections ? (
+            <div className="flex items-center justify-center h-full text-gray-600">
+              Select retailer, category, and item to load the ladder.
+            </div>
+          ) : ladderLoading ? (
+            <div className="flex items-center justify-center h-full text-gray-600">
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              Loading ladder…
+            </div>
+          ) : !currentData ? (
+            <div className="flex items-center justify-center h-full text-gray-600">
+              No data loaded.
+            </div>
+          ) : (
+            <div className="text-gray-700">
+              {/* Your table/grid rendering goes here */}
+              {/* This placeholder is intentionally minimal to avoid breaking your existing layout */}
+              Loaded weeks: {currentData.size}
+            </div>
+          )}
+        </CardContent>
       </Card>
     </div>
   );
