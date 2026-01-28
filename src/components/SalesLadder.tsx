@@ -194,7 +194,7 @@ return Array.from(map.entries())
 
 }, [options, selectedRetailer, selectedCategory]);
 
-const unique = Array.from(new Set(filtered.map(r => `${r.itemNumber}${r.dorelItem ? ` \ ${r.dorelItem}` : ''}`)));
+const unique = Array.from(new Set(filtered.map(r => `${r.itemNumber}${r.dorelItem ? ` | ${r.dorelItem}` : ''}`)));
 return unique.sort();
 
 }, [optionsRows, selectedRetailer, selectedCategory, hasProductDimension, selectedProduct]);
