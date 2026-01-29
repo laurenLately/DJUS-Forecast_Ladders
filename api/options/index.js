@@ -3,39 +3,33 @@ const { querySnowflake } = require("../shared/snowflake");
 const OPTIONS_SOURCE = "DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_BI";
 
 module.exports = async function (context, req) {
-  const retailer = (req.query.retailer || "").trim();
+  const retailer = (req.query.retailer || "").trim(); // optional
   const category = (req.query.category || "").trim(); // optional
 
   try {
-    if (!retailer) {
-      context.res = {
-        status: 400,
-        headers: { "content-type": "application/json" },
-        body: { error: "Missing required query param: retailer" }
-      };
-      return;
-    }
-
-    // IMPORTANT:
-    // If these columns don't exist in LADDER_PLAN_BI, replace them with the correct names
-    // (or remove them). The required outputs are:
-    // retailer, category, retailer_item_id, retailer_item_number (display)
     const selectCols = `
       RETAILER,
       ULTRAGROUP_DESC1 AS CATEGORY,
       RETAILER_ITEM_ID,
-      ITEM_ID_AT_WEEK AS DOREL_ITEM
+      RETAILER_ITEM_NUMBER,
+      DOREL_ITEM,
+      ITEM_DESCRIPTION
     `;
 
     let sql = `
       SELECT DISTINCT
         ${selectCols}
       FROM ${OPTIONS_SOURCE}
-      WHERE RETAILER = ?
+      WHERE ULTRAGROUP_DESC1 IS NOT NULL
         AND RETAILER_ITEM_ID IS NOT NULL
     `;
 
-    const binds = [retailer];
+    const binds = [];
+
+    if (retailer) {
+      sql += ` AND RETAILER = ?`;
+      binds.push(retailer);
+    }
 
     if (category) {
       sql += ` AND ULTRAGROUP_DESC1 = ?`;
@@ -44,18 +38,20 @@ module.exports = async function (context, req) {
 
     sql += `
       ORDER BY
+        RETAILER,
         CATEGORY,
-        RETAILER_ITEM_ID
+        RETAILER_ITEM_NUMBER
     `;
 
     const rawRows = await querySnowflake(sql, binds);
 
-    // Normalize keys to match your TS type LadderOptionsRow
     const rows = rawRows.map(r => ({
       retailer: r.RETAILER,
       category: r.CATEGORY,
       retailer_item_id: String(r.RETAILER_ITEM_ID),
-      dorel_item: r.DOREL_ITEM ?? undefined
+      retailer_item_number: r.RETAILER_ITEM_NUMBER ? String(r.RETAILER_ITEM_NUMBER) : String(r.RETAILER_ITEM_ID),
+      dorel_item: r.DOREL_ITEM ?? undefined,
+      item_description: r.ITEM_DESCRIPTION ?? undefined
     }));
 
     context.res = {
