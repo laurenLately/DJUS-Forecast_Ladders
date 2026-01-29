@@ -1,16 +1,30 @@
 import React, { useState } from 'react';
 import { LadderGrid } from './components/LadderGrid';
+import { SelectionGate } from './components/SelectionGate';
 import { POSDataGrid } from './components/POSDataGrid';
 import { Download, Save, RefreshCw, Menu, X } from 'lucide-react';
 
 export default function App() {
   const [filters, setFilters] = useState({
-    retailer: 'Target',
-    category: 'Furniture',
-    item: 'All Items',
+    retailer: "",
+    category: "",
+    retailer_item_id: "",
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<'ladder' | 'pos'>('ladder');
+
+  // Require a valid selection before rendering grids.
+  if (!filters.retailer || !filters.category || !filters.retailer_item_id) {
+    return (
+      <SelectionGate
+        onSubmit={(sel) => {
+          setFilters(sel);
+          setMenuOpen(false);
+          setCurrentScreen('ladder');
+        }}
+      />
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -71,7 +85,7 @@ export default function App() {
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Item</label>
                 <select 
                   className="w-full text-sm border border-gray-300 rounded px-3 py-2 bg-white"
-                  value={filters.item}
+                  value={filters.retailer_item_id}
                   onChange={(e) => setFilters({ ...filters, item: e.target.value })}
                 >
                   <option>All Items</option>
@@ -132,7 +146,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-white/70 font-medium">Item:</span>
-            <span className="text-white font-semibold">{filters.item}</span>
+            <span className="text-white font-semibold">{filters.retailer_item_id}</span>
           </div>
           <div className="ml-6">
             <button 
@@ -163,7 +177,7 @@ export default function App() {
 
       {/* Grid */}
       <div className="flex-1 overflow-auto">
-        {currentScreen === 'ladder' ? <LadderGrid /> : <POSDataGrid />}
+        {currentScreen === 'ladder' ? <LadderGrid selection={filters} /> : <POSDataGrid />}
       </div>
     </div>
   );
