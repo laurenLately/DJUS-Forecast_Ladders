@@ -95,12 +95,11 @@ function formatWeekBegin(weekEnd: string) {
   return d.toISOString().slice(0, 10);
 }
 
-export function LadderGrid() {
+export function LadderGrid({ selection }: { selection: { retailer: string; category: string; retailer_item_id: string } }) {
   const [grid, setGrid] = useState<LadderGridModel | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-
+  const { retailer, category, retailer_item_id } = selection;
 
   useEffect(() => {
     let cancelled = false;
