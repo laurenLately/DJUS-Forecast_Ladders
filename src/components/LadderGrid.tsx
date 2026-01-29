@@ -100,10 +100,7 @@ export function LadderGrid() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // TEMP until filter UI is wired:
-  const retailer = "AMZ";
-  const category = "DEFAULT";
-  const retailer_item_id = "12345";
+
 
   useEffect(() => {
     let cancelled = false;
