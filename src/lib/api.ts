@@ -1,25 +1,21 @@
-export type LadderOptionsRow = {
-  retailer: string;
-  category: string;
-  retailer_item_id: string;        // used for queries
-  retailer_item_number: string;    // shown in dropdown
-  dorel_item?: string;
-};
+import type { LadderOptionsRow, LadderResponse } from "./models";
 
-export async function getOptions(): Promise<LadderOptionsRow[]> {
-  const res = await fetch("/api/options");
-  if (!res.ok) throw new Error(`Options failed: ${res.status}`);
-  return res.json();
+async function asJson<T>(res: Response): Promise<T> {
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  return res.json() as Promise<T>;
 }
 
-export async function getLadder(params: {
+export async function fetchOptions(): Promise<LadderOptionsRow[]> {
+  const res = await fetch("/api/options");
+  return asJson<LadderOptionsRow[]>(res);
+}
+
+export async function fetchLadder(params: {
   retailer: string;
   category: string;
   retailer_item_id: string;
-}): Promise<any> {
+}): Promise<LadderResponse> {
   const qs = new URLSearchParams(params as any).toString();
   const res = await fetch(`/api/ladder?${qs}`);
-  if (!res.ok) throw new Error(`Ladder failed: ${res.status}`);
-  return res.json();
+  return asJson<LadderResponse>(res);
 }
-
