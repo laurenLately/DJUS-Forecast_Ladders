@@ -13,7 +13,7 @@ module.exports = async function (context, req) {
       FROM ${OPTIONS_SOURCE}
       WHERE RETAILER IS NOT NULL
         AND RETAILER_ITEM_ID IS NOT NULL
-      ORDER BY RETAILER, CATEGORY, RETAILER_ITEM_NUMBER
+      ORDER BY RETAILER, CATEGORY, RETAILER_ITEM_ID
     `;
 
     const rows = await querySnowflake(sql);
