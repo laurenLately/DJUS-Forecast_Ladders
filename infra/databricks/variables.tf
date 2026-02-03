@@ -1,24 +1,9 @@
-variable "resource_group_name" {
+variable "databricks_host" {
   type        = string
-  description = "Resource group containing Databricks networking resources"
-}
-
-variable "location" {
-  type        = string
-  description = "Azure region"
+  description = "Databricks workspace URL (e.g. https://adb-xxxx.azuredatabricks.net)"
 }
 
 variable "environment" {
   type        = string
   description = "Environment name (dev, test, prod)"
-}
-
-variable "public_subnet_id" {
-  type        = string
-  description = "Public subnet ID for Databricks"
-}
-
-variable "private_subnet_id" {
-  type        = string
-  description = "Private subnet ID for Databricks"
 }
