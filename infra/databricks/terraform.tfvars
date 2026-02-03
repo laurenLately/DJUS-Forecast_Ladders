@@ -1,2 +1,2 @@
-databricks_host = "https://adb-xxxxxxxxxxxxxxxx.xx.azuredatabricks.net"
+databricks_host = "https://adb-8406923662849243.3.azuredatabricks.net/"
 environment     = "dev"
