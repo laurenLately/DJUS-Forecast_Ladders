@@ -11,18 +11,11 @@ resource "databricks_sql_endpoint" "ladder_ui" {
   spot_instance_policy = "COST_OPTIMIZED"
 
   tags {
-  key   = "environment"
-  value = var.environment
-}
-
-tags {
-  key   = "application"
-  value = "dj-forecast-ladders"
-}
-
-tags {
-  key   = "workload"
-  value = "ui-read-write"
+  custom_tags = {
+    environment = var.environment
+    application = "dj-forecast-ladders"
+    workload    = "ui-read-write"
+  }
 }
 
 }
