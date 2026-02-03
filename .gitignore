@@ -6,3 +6,4 @@ dist/
 .tfplan
 .terraform/
 _state_backups/
+*.tfvars
