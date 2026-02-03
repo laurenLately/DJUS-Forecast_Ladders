@@ -3,7 +3,7 @@ dist/
 # Terraform
 *.tfstate
 *.tfstate.backup
-.tfplan
+tfplan
 .terraform/
 _state_backups/
 *.tfvars
