@@ -1,0 +1,64 @@
+/* ============================================================
+   Phase 2 – Tables (Revised)
+   Step 2: Override storage + Sandbox ULTRAGROUP mapping
+
+   Creates:
+     - LADDER_PLAN_OVERRIDES: authoritative autosave overrides
+     - ITEM_MASTER_ULTRAGROUP: skinny mapping for category (ULTRAGROUP_DESC1)
+
+   Notes:
+     - Overrides store only editable fields (math stays in the UI view)
+     - Mapping table removes cross-db runtime dependency on DJUS_JDE
+   ============================================================ */
+
+USE ROLE SYSADMIN;
+USE DATABASE DJUS_ML_SANDBOX;
+USE SCHEMA LADDER_APP;
+
+/* ------------------------------------------------------------
+   1) Authoritative overrides table
+------------------------------------------------------------ */
+CREATE TABLE IF NOT EXISTS LADDER_PLAN_OVERRIDES (
+  /* --- ladder grain --- */
+  RETAILER                STRING       NOT NULL,
+  RETAILER_ITEM_ID        STRING       NOT NULL,
+  ITEM_ID_AT_WEEK         STRING       NOT NULL,
+  WEEK_ENDING             DATE         NOT NULL,
+
+  /* --- editable fields --- */
+  PLAN_UNITS              NUMBER(38,0),
+  SUGGESTED_PLAN_UNITS    NUMBER(38,0),
+
+  /* --- audit metadata --- */
+  UPDATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+  UPDATED_BY              STRING,
+  SOURCE_APP              STRING        DEFAULT 'LADDER_UI',
+
+  CONSTRAINT PK_LADDER_PLAN_OVERRIDES
+    PRIMARY KEY (RETAILER, RETAILER_ITEM_ID, ITEM_ID_AT_WEEK, WEEK_ENDING)
+);
+
+COMMENT ON TABLE LADDER_PLAN_OVERRIDES IS
+'Authoritative autosaved overrides for ladder PLAN_UNITS and SUGGESTED_PLAN_UNITS. Dependent math is recomputed in LADDER_PLAN_BI_UI.';
+
+
+/* ------------------------------------------------------------
+   2) Sandbox-local ULTRAGROUP mapping table (skinny copy)
+   Purpose:
+     - Provide ULTRAGROUP_DESC1 (category) without requiring
+       runtime access to DJUS_JDE from SVC_AUTOMATION.
+
+   Build-time dependency:
+     - SYSADMIN (or your build role) must be able to SELECT from
+       DJUS_JDE.PUBLIC.ODS_F4101_ITEM_MASTER to populate this table.
+------------------------------------------------------------ */
+CREATE OR REPLACE TABLE ITEM_MASTER_ULTRAGROUP AS
+SELECT
+  TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM)) AS DOREL_ITEM_KEY,
+  ULTRAGROUP_DESC1
+FROM DJUS_JDE.PUBLIC.ODS_F4101_ITEM_MASTER
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
+  ORDER BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
+) = 1;
+
