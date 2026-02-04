@@ -345,3 +345,127 @@ LEFT JOIN item_master im
 AND im.rn = 1
  
 ORDER BY RETAILER, RETAILER_ITEM_ID, RETAIL_YEAR, RETAIL_WEEK;
+
+
+
+
+CREATE OR REPLACE PROCEDURE DJUS_ML_SANDBOX.MLOPS.TRAINING_REQUEST_DATABRICKS_RUN()
+RETURNS VARCHAR
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.9'
+PACKAGES = ('requests','snowflake-snowpark-python','pytz')
+HANDLER = 'run_training_jobs'
+EXTERNAL_ACCESS_INTEGRATIONS = (DATABRICKS_API_OAUTH_ACCESS_INTEGRATION)
+SECRETS = ('cred'=DATABRICKS_API_OAUTH_TOKEN)
+EXECUTE AS OWNER
+AS ' 
+import _snowflake 
+import requests 
+import time 
+from collections import deque
+import datetime
+import pytz
+
+# DESCRIPTION:
+
+# This procedure utilizes simple python code to call the Databricks API to allow for the automated running of training requests.
+# This will load a max of 100 requests per job to Databricks, 
+# utilizing the task djus_forecast.mlops.databricks_training_task to run every ten minutes during training
+
+
+# AUDIT LOG:
+
+# Stephen T (CT) 4/18/2025 - Initial creation of documentation for legacy code
+
+# Make the GET request to the Jobs API
+def call_databricks_job(input_job_id: str, input_request_id: str):
+    databricks_url = "https://adb-8406923662849243.3.azuredatabricks.net/api/2.0/jobs/run-now"
+    token = _snowflake.get_oauth_access_token(''cred'')
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+    request_json = {
+        "job_id": input_job_id,
+        "job_parameters": {
+            "request_id": input_request_id,
+        },
+        "queue": {
+            "enabled": "true"
+        }
+    }  
+    response = requests.post(databricks_url, json=request_json, headers=headers)
+    if response.status_code != 200:
+        raise Exception("API Error:" + str(response.status_code) + response.text)
+def update_request_status(snowpark_session, request_ids, status_cd, databricks_job_id):
+    # Get current time in ET timezone
+    et_timezone = pytz.timezone(''US/Eastern'')
+    current_time_et = datetime.datetime.now(et_timezone).strftime("%Y-%m-%d %H:%M:%S ET")
+    # Update status and description
+    update_sql = f"""
+    UPDATE DJUS_FORECAST.mlops.training_request 
+    SET STATUS_CD = ''{status_cd}'', 
+        STATUS_DESCRIPTION = ''Run Queued at {current_time_et}'',
+        DATABRICKS_JOB_ID = ''{databricks_job_id}''
+    WHERE TRAINING_REQUEST_ID  in   ( {request_ids} )
+    """
+    snowpark_session.sql(update_sql).collect()
+
+def process_job_requests(snowpark_session, databricks_job_id, job_num):
+    # Check how many are already queued
+    queue_count_df = snowpark_session.sql(f"""
+    SELECT COUNT(*) AS QUEUED_COUNT 
+    FROM DJUS_FORECAST.mlops.training_request tr 
+    JOIN DJUS_FORECAST.mlops.training_request_batch trb 
+        ON tr.training_request_batch_id = trb.training_request_batch_id 
+    WHERE status_cd = ''QUEUED_{job_num}'' 
+
+    """)
+    queued_count = queue_count_df.collect()[0].QUEUED_COUNT
+    slots_available = 100 - queued_count
+    
+    requests_processed = 0
+    # Get new requests if slots are available
+    if slots_available > 0:
+        results_df = snowpark_session.sql(f"""
+        SELECT TRAINING_REQUEST_ID AS REQUEST_ID
+        FROM DJUS_FORECAST.mlops.training_request tr 
+        JOIN DJUS_FORECAST.mlops.training_request_batch trb 
+            ON tr.training_request_batch_id = trb.training_request_batch_id 
+        WHERE status_cd = ''REQUESTED'' 
+
+        ORDER BY TRB.TRAINING_REQUEST_BATCH_ID, TR.TRAINING_REQUEST_ID
+        LIMIT {slots_available}
+        """)
+        requests_list = [str(row.REQUEST_ID) for row in results_df.collect()]
+        formatted_request_ids = ",".join(requests_list)
+        requests_processed = len(requests_list)
+
+        update_request_status(snowpark_session, formatted_request_ids, f"QUEUED_{job_num}", databricks_job_id)
+            
+        # Update status for all new requests to QUEUED_{job_num}
+        for request_id in requests_list:
+            call_databricks_job(databricks_job_id, request_id)
+            time.sleep(1)
+    
+    return requests_processed
+
+def run_training_jobs(snowpark_session):
+    # List of Databricks job IDs
+    databricks_job_ids = [
+        "83417411709305",  # Original job ID
+        "217332476328581",  # Additional job ID 
+        "736752017650967",   # Additional job ID 
+        "10491634008987",   # Additional job ID 
+        "916193793438931"   # Additional job ID 
+    ]
+    
+    results = []
+    
+    # Process requests for each job
+    for index, job_id in enumerate(databricks_job_ids):
+        job_num = index + 1  # 1-based indexing for job numbers
+        processed_count = process_job_requests(snowpark_session, job_id, job_num)
+        results.append(f"Queued {processed_count} runs for Job {job_num} (ID: {job_id})")
+
+    return results
+';
