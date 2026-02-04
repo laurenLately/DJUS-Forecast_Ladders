@@ -1,57 +1,15 @@
-/* ============================================================
-   Phase 2 – Grants (Revised)
-   Step 5: Permissions for SVC_AUTOMATION
-
-   Grants:
-     - Read UI view(s)
-     - Write overrides table
-     - Execute autosave procedures
-     - Read underlying source tables used by the UI view
-     - Read local category mapping table (no DJUS_JDE runtime access)
-   ============================================================ */
-
 USE ROLE SYSADMIN;
+USE DATABASE DJUS_ML_SANDBOX;
+USE SCHEMA PUBLIC;
 
-/* ------------------------------------------------------------
-   Core access to database + schemas
------------------------------------------------------------- */
-GRANT USAGE ON DATABASE DJUS_ML_SANDBOX TO ROLE SVC_AUTOMATION;
+-- Table rights
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE LADDER_PLAN_OVERRIDES TO ROLE svc_automation;
+GRANT SELECT ON TABLE LADDER_SCENARIO_CONFIG TO ROLE svc_automation;
 
-GRANT USAGE ON SCHEMA DJUS_ML_SANDBOX.LADDER_APP TO ROLE SVC_AUTOMATION;
-GRANT USAGE ON SCHEMA DJUS_ML_SANDBOX.PUBLIC TO ROLE SVC_AUTOMATION;
+-- View rights
+GRANT SELECT ON VIEW V_LADDER_ACTIVE_SCENARIO_WEEKS TO ROLE svc_automation;
+GRANT SELECT ON VIEW LADDER_PLAN_BI_UI TO ROLE svc_automation;
 
-/* ------------------------------------------------------------
-   App objects (LADDER_APP)
------------------------------------------------------------- */
-GRANT SELECT ON VIEW DJUS_ML_SANDBOX.LADDER_APP.LADDER_PLAN_BI_UI TO ROLE SVC_AUTOMATION;
-GRANT SELECT ON VIEW DJUS_ML_SANDBOX.LADDER_APP.V_LADDER_OPTIONS TO ROLE SVC_AUTOMATION;
-
-GRANT SELECT, INSERT, UPDATE, DELETE
-  ON TABLE DJUS_ML_SANDBOX.LADDER_APP.LADDER_PLAN_OVERRIDES
-  TO ROLE SVC_AUTOMATION;
-
-GRANT SELECT
-  ON TABLE DJUS_ML_SANDBOX.LADDER_APP.ITEM_MASTER_ULTRAGROUP
-  TO ROLE SVC_AUTOMATION;
-
-/* Procedures (autosave + fetch slice) */
-GRANT USAGE ON PROCEDURE DJUS_ML_SANDBOX.LADDER_APP.SP_LADDER_AUTOSAVE_CELL(
-  STRING, STRING, STRING, DATE, STRING, NUMBER, STRING
-) TO ROLE SVC_AUTOMATION;
-
-GRANT USAGE ON PROCEDURE DJUS_ML_SANDBOX.LADDER_APP.SP_LADDER_AUTOSAVE_AND_FETCH_SLICE(
-  STRING, STRING, STRING, DATE, STRING, NUMBER, STRING
-) TO ROLE SVC_AUTOMATION;
-
-/* ------------------------------------------------------------
-   Underlying source objects referenced by LADDER_PLAN_BI_UI
------------------------------------------------------------- */
-GRANT SELECT ON TABLE DJUS_ML_SANDBOX.PUBLIC.RETAIL_WEEK_DIM_2YR TO ROLE SVC_AUTOMATION;
-GRANT SELECT ON TABLE DJUS_ML_SANDBOX.PUBLIC.TR3_WEEKLY_UNIFIED TO ROLE SVC_AUTOMATION;
-GRANT SELECT ON TABLE DJUS_ML_SANDBOX.PUBLIC.LADDER_PLANS_QTY TO ROLE SVC_AUTOMATION;
-
-/* ------------------------------------------------------------
-   Optional guardrails (uncomment if you want reduced future friction)
------------------------------------------------------------- */
--- GRANT SELECT ON FUTURE VIEWS IN SCHEMA DJUS_ML_SANDBOX.LADDER_APP TO ROLE SVC_AUTOMATION;
--- GRANT SELECT, INSERT, UPDATE, DELETE ON FUTURE TABLES IN SCHEMA DJUS_ML_SANDBOX.LADDER_APP TO ROLE SVC_AUTOMATION;
+-- Proc execute rights
+GRANT USAGE ON PROCEDURE SP_LADDER_AUTOSAVE_CELL_PY(STRING,STRING,STRING,DATE,STRING,NUMBER,STRING) TO ROLE svc_automation;
+GRANT USAGE ON PROCEDURE SP_LADDER_AUTOSAVE_AND_FETCH_SLICE_PY(STRING,STRING,STRING,DATE,STRING,NUMBER,STRING) TO ROLE svc_automation;

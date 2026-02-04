@@ -1,70 +1,19 @@
-/* ============================================================
-   Phase 2 – Views (Revised)
-   Step 3: UI Read Model w/ Overrides + Full Recalculation
-
-   Creates:
-     - LADDER_PLAN_BI_UI  (29 columns, recalculated using overrides)
-     - V_LADDER_OPTIONS   (distinct option set for UI filters)
-
-   Depends on:
-     - DJUS_ML_SANDBOX.PUBLIC.RETAIL_WEEK_DIM_2YR
-     - DJUS_ML_SANDBOX.PUBLIC.TR3_WEEKLY_UNIFIED
-     - DJUS_ML_SANDBOX.PUBLIC.LADDER_PLANS_QTY
-     - DJUS_ML_SANDBOX.LADDER_APP.LADDER_PLAN_OVERRIDES
-     - DJUS_ML_SANDBOX.LADDER_APP.ITEM_MASTER_ULTRAGROUP   (local mapping)
-   ============================================================ */
-
 USE ROLE SYSADMIN;
 USE DATABASE DJUS_ML_SANDBOX;
-USE SCHEMA LADDER_APP;
+USE SCHEMA PUBLIC;
 
-/* ------------------------------------------------------------
-   LADDER_PLAN_BI_UI
------------------------------------------------------------- */
-CREATE OR REPLACE VIEW LADDER_PLAN_BI_UI (
-  RETAILER,
-  RETAILER_ITEM_ID,
-  ITEM_ID_AT_WEEK,
-  ULTRAGROUP_DESC1,
-  RETAIL_YEAR,
-  RETAIL_WEEK,
-  WEEK_BEG_DATE,
-  WEEK_ENDING,
-  ACTUAL_UNITS_LY,
-  ACTUAL_DOLLARS_LY,
-  ACTUAL_UNIT_INV_LY,
-  ACTUAL_UNITS,
-  ACTUAL_DOLLARS,
-  WEEKLY_FORECAST_UNITS,
-  ACTUAL_UNIT_INV,
-  WHSE_ON_ORDER_UNITS,
-  PLAN_UNITS,
-  SUGGESTED_PLAN_UNITS,
-  PLAN_UNIT_RECEIPTS,
-  SUGGESTED_PLAN_UNIT_RECEIPTS,
-  FORECAST_UNIT_RECEIPTS,
-  TOW,
-  WOS,
-  ITEM_AMOUNT,
-  FORECAST_DOLLARS,
-  START_INV_UNITS_TR3,
-  PLAN_UNIT_INVENTORY,
-  SUGGESTED_PLAN_UNIT_INVENTORY,
-  FORECAST_UNIT_INVENTORY
-) AS
+CREATE OR REPLACE VIEW LADDER_PLAN_BI_UI AS
 WITH
-/* ------------------------------------------------------------
-1) Retail week spine
------------------------------------------------------------- */
 week_dim AS (
-  SELECT retail_year, retail_week, week_beg_date, week_ending
-  FROM DJUS_ML_SANDBOX.PUBLIC.RETAIL_WEEK_DIM_2YR
-  WHERE retail_year IN (2025, 2026, 2027)
+  SELECT
+    scenario_code,
+    retail_year,
+    retail_week,
+    week_beg_date,
+    week_ending
+  FROM V_LADDER_ACTIVE_SCENARIO_WEEKS
 ),
 
-/* ------------------------------------------------------------
-2) Item scope
------------------------------------------------------------- */
 items AS (
   SELECT DISTINCT
     TRIM(retailer)::STRING AS retailer,
@@ -76,16 +25,14 @@ items AS (
   SELECT DISTINCT
     TRIM(retailer)::STRING AS retailer,
     TRIM(retailer_item_id)::STRING AS retailer_item_id
-  FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLANS_QTY
+  FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_OVERRIDES
 ),
 
-/* ------------------------------------------------------------
-3) Skeleton: every item x every week
------------------------------------------------------------- */
 skeleton AS (
   SELECT
     i.retailer,
     i.retailer_item_id,
+    w.scenario_code,
     w.retail_year,
     w.retail_week,
     w.week_beg_date,
@@ -94,63 +41,23 @@ skeleton AS (
   CROSS JOIN week_dim w
 ),
 
-/* ------------------------------------------------------------
-4) Baseline ladder inputs
------------------------------------------------------------- */
-lp_base AS (
+ov AS (
   SELECT
     TRIM(retailer)::STRING AS retailer,
     TRIM(retailer_item_id)::STRING AS retailer_item_id,
-    TRIM(item_id)::STRING AS item_id,
+    TRIM(item_id_at_week)::STRING AS item_id_at_week,
     TO_DATE(week_ending) AS week_ending,
+    TRIM(scenario)::STRING AS scenario,
     COALESCE(plan_units, 0) AS plan_units,
     COALESCE(suggested_plan_units, 0) AS suggested_plan_units
-  FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLANS_QTY
-  WHERE retailer IS NOT NULL
-    AND retailer_item_id IS NOT NULL
-    AND week_ending IS NOT NULL
+  FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_OVERRIDES
 ),
 
-/* ------------------------------------------------------------
-4b) Overrides (autosaved)
------------------------------------------------------------- */
-lp_override AS (
-  SELECT
-    TRIM(retailer)::STRING AS retailer,
-    TRIM(retailer_item_id)::STRING AS retailer_item_id,
-    TRIM(item_id_at_week)::STRING AS item_id,
-    TO_DATE(week_ending) AS week_ending,
-    COALESCE(plan_units, 0) AS plan_units,
-    COALESCE(suggested_plan_units, 0) AS suggested_plan_units
-  FROM DJUS_ML_SANDBOX.LADDER_APP.LADDER_PLAN_OVERRIDES
-),
-
-/* ------------------------------------------------------------
-4c) Effective ladder inputs: baseline + overrides
------------------------------------------------------------- */
-lp AS (
-  SELECT
-    b.retailer,
-    b.retailer_item_id,
-    b.item_id,
-    b.week_ending,
-    COALESCE(o.plan_units, b.plan_units) AS plan_units,
-    COALESCE(o.suggested_plan_units, b.suggested_plan_units) AS suggested_plan_units
-  FROM lp_base b
-  LEFT JOIN lp_override o
-    ON o.retailer = b.retailer
-   AND o.retailer_item_id = b.retailer_item_id
-   AND o.item_id = b.item_id
-   AND o.week_ending = b.week_ending
-),
-
-/* ------------------------------------------------------------
-5) TR3 facts (include 2024 for LY)
------------------------------------------------------------- */
 tr3 AS (
   SELECT
     TRIM(retailer)::STRING AS retailer,
     TRIM(retailer_item_id)::STRING AS retailer_item_id,
+    TRIM(item_id_at_week)::STRING AS item_id_at_week,
     TO_DATE(week_ending) AS week_ending,
     retail_year::INT AS retail_year,
     retail_week::INT AS retail_week,
@@ -161,25 +68,29 @@ tr3 AS (
     COALESCE(on_hand_units, 0) AS on_hand_units,
     COALESCE(whse_on_order_units, 0) AS whse_on_order_units
   FROM DJUS_ML_SANDBOX.PUBLIC.TR3_WEEKLY_UNIFIED
-  WHERE retail_year IN (2024, 2025, 2026)
+  -- include prior year for LY
+  WHERE retail_year IN (
+    (SELECT MIN(retail_year) - 1 FROM V_LADDER_ACTIVE_SCENARIO_WEEKS),
+    (SELECT MIN(retail_year)     FROM V_LADDER_ACTIVE_SCENARIO_WEEKS),
+    (SELECT MAX(retail_year)     FROM V_LADDER_ACTIVE_SCENARIO_WEEKS)
+  )
 ),
 
-/* ------------------------------------------------------------
-6) Base join
------------------------------------------------------------- */
 base AS (
   SELECT
     s.retailer,
     s.retailer_item_id,
-    lp.item_id AS item_id_at_week,
+
+    -- pick item id from TR3 if available, else from overrides (or null)
+    COALESCE(t.item_id_at_week, ov.item_id_at_week) AS item_id_at_week,
 
     s.retail_year,
     s.retail_week,
     s.week_beg_date,
     s.week_ending,
 
-    COALESCE(lp.plan_units, 0) AS plan_units,
-    COALESCE(lp.suggested_plan_units, 0) AS suggested_plan_units,
+    COALESCE(ov.plan_units, 0) AS plan_units,
+    COALESCE(ov.suggested_plan_units, 0) AS suggested_plan_units,
 
     COALESCE(t.actual_units, 0) AS actual_units,
     COALESCE(t.actual_dollars_raw, 0) AS actual_dollars_raw,
@@ -188,10 +99,11 @@ base AS (
     COALESCE(t.whse_on_order_units, 0) AS whse_on_order_units
 
   FROM skeleton s
-  LEFT JOIN lp
-    ON lp.retailer = s.retailer
-   AND lp.retailer_item_id = s.retailer_item_id
-   AND lp.week_ending = s.week_ending
+  LEFT JOIN ov
+    ON ov.retailer = s.retailer
+   AND ov.retailer_item_id = s.retailer_item_id
+   AND ov.week_ending = s.week_ending
+   AND ov.scenario = s.scenario_code
 
   LEFT JOIN tr3 t
     ON t.retailer = s.retailer
@@ -199,9 +111,6 @@ base AS (
    AND t.week_ending = s.week_ending
 ),
 
-/* ------------------------------------------------------------
-7) LY join
------------------------------------------------------------- */
 with_ly AS (
   SELECT
     b.*,
@@ -212,13 +121,11 @@ with_ly AS (
   LEFT JOIN tr3 ly
     ON ly.retailer = b.retailer
    AND ly.retailer_item_id = b.retailer_item_id
+   AND ly.item_id_at_week = b.item_id_at_week
    AND ly.retail_year = b.retail_year - 1
    AND ly.retail_week = b.retail_week
 ),
 
-/* ------------------------------------------------------------
-8) Receipts shift +2
------------------------------------------------------------- */
 with_receipts AS (
   SELECT
     w.*,
@@ -241,41 +148,28 @@ with_receipts AS (
   FROM with_ly w
 ),
 
-/* ------------------------------------------------------------
-9) Carry-forward TR3 on-hand
------------------------------------------------------------- */
 carry_onhand AS (
   SELECT
     r.*,
-
     LAST_VALUE(r.actual_unit_inv) IGNORE NULLS OVER (
       PARTITION BY r.retailer, r.retailer_item_id
       ORDER BY r.week_ending
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS on_hand_asof
-
   FROM with_receipts r
 ),
 
-/* ------------------------------------------------------------
-10) Start inventory for each retail_year
------------------------------------------------------------- */
 with_start_inv AS (
   SELECT
     c.*,
-
     FIRST_VALUE(c.on_hand_asof) OVER (
       PARTITION BY c.retailer, c.retailer_item_id, c.retail_year
       ORDER BY c.retail_week
       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
     ) AS start_inv_units_tr3
-
   FROM carry_onhand c
 ),
 
-/* ------------------------------------------------------------
-11) Recompute scenario inventories
------------------------------------------------------------- */
 with_proj_inv AS (
   SELECT
     s.*,
@@ -307,9 +201,6 @@ with_proj_inv AS (
   FROM with_start_inv s
 ),
 
-/* ------------------------------------------------------------
-12) Final derived calcs
------------------------------------------------------------- */
 final AS (
   SELECT
     p.*,
@@ -328,59 +219,51 @@ final AS (
       WHEN p.actual_units = 0 THEN NULL
       ELSE (p.whse_on_order_units + p.actual_unit_inv) / NULLIF(p.actual_units, 0)
     END AS wos
-
   FROM with_proj_inv p
 ),
 
-/* ------------------------------------------------------------
-13) LOCAL item master lookup (category mapping)
------------------------------------------------------------- */
 item_master AS (
   SELECT
-    DOREL_ITEM_KEY AS dorel_item_key,
-    ULTRAGROUP_DESC1,
-    1 AS rn
-  FROM DJUS_ML_SANDBOX.LADDER_APP.ITEM_MASTER_ULTRAGROUP
+    TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM)) AS dorel_item_key,
+    ultragroup_desc1,
+    ROW_NUMBER() OVER (
+      PARTITION BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
+      ORDER BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
+    ) AS rn
+  FROM djus_jde.public.ODS_F4101_ITEM_MASTER
 )
 
 SELECT
   f.retailer AS RETAILER,
   f.retailer_item_id AS RETAILER_ITEM_ID,
   f.item_id_at_week AS ITEM_ID_AT_WEEK,
-
-  im.ULTRAGROUP_DESC1 AS ULTRAGROUP_DESC1,
-
+  im.ultragroup_desc1 AS ULTRAGROUP_DESC1,
   f.retail_year AS RETAIL_YEAR,
   f.retail_week AS RETAIL_WEEK,
   f.week_beg_date AS WEEK_BEG_DATE,
   f.week_ending AS WEEK_ENDING,
 
-  /* LY */
   f.actual_units_ly AS ACTUAL_UNITS_LY,
   f.actual_dollars_ly AS ACTUAL_DOLLARS_LY,
   f.actual_unit_inv_ly AS ACTUAL_UNIT_INV_LY,
 
-  /* TY */
   f.actual_units AS ACTUAL_UNITS,
   f.actual_dollars AS ACTUAL_DOLLARS,
   f.weekly_forecast_units AS WEEKLY_FORECAST_UNITS,
   f.actual_unit_inv AS ACTUAL_UNIT_INV,
   f.whse_on_order_units AS WHSE_ON_ORDER_UNITS,
 
-  /* Plans (effective inputs) */
   f.plan_units AS PLAN_UNITS,
   f.suggested_plan_units AS SUGGESTED_PLAN_UNITS,
   COALESCE(f.plan_unit_receipts, 0) AS PLAN_UNIT_RECEIPTS,
   COALESCE(f.suggested_plan_unit_receipts, 0) AS SUGGESTED_PLAN_UNIT_RECEIPTS,
   COALESCE(f.forecast_unit_receipts, 0) AS FORECAST_UNIT_RECEIPTS,
 
-  /* Derived */
   f.tow AS TOW,
   f.wos AS WOS,
   f.item_amount AS ITEM_AMOUNT,
   CASE WHEN f.item_amount IS NULL THEN NULL ELSE f.weekly_forecast_units * f.item_amount END AS FORECAST_DOLLARS,
 
-  /* TR3-anchored start inventory + projected inventories */
   f.start_inv_units_tr3 AS START_INV_UNITS_TR3,
   f.plan_unit_inventory AS PLAN_UNIT_INVENTORY,
   f.suggested_plan_unit_inventory AS SUGGESTED_PLAN_UNIT_INVENTORY,
@@ -390,15 +273,5 @@ FROM final f
 LEFT JOIN item_master im
   ON TRIM(f.item_id_at_week) = im.dorel_item_key
  AND im.rn = 1
-;
 
-/* ------------------------------------------------------------
-   Optional: Options view for UI dropdowns/filtering
------------------------------------------------------------- */
-CREATE OR REPLACE VIEW V_LADDER_OPTIONS AS
-SELECT DISTINCT
-  RETAILER,
-  ULTRAGROUP_DESC1,
-  RETAILER_ITEM_ID,
-  ITEM_ID_AT_WEEK
-FROM LADDER_PLAN_BI_UI;
+ORDER BY RETAILER, RETAILER_ITEM_ID, RETAIL_YEAR, RETAIL_WEEK;

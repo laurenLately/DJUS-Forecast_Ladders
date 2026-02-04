@@ -1,0 +1,90 @@
+CREATE OR REPLACE PROCEDURE SP_LADDER_AUTOSAVE_AND_FETCH_SLICE_PY(
+  P_RETAILER           STRING,
+  P_RETAILER_ITEM_ID   STRING,
+  P_ITEM_ID_AT_WEEK    STRING,
+  P_WEEK_ENDING        DATE,
+  P_FIELD_NAME         STRING,
+  P_VALUE              NUMBER,
+  P_UPDATED_BY         STRING
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.9'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+from snowflake.snowpark import Session
+
+def esc(val):
+    return (val or "").replace("'", "''")
+
+def run(session: Session,
+        P_RETAILER,
+        P_RETAILER_ITEM_ID,
+        P_ITEM_ID_AT_WEEK,
+        P_WEEK_ENDING,
+        P_FIELD_NAME,
+        P_VALUE,
+        P_UPDATED_BY):
+
+    retailer = (P_RETAILER or "").strip()
+    retailer_item_id = (P_RETAILER_ITEM_ID or "").strip()
+    item_id_at_week = (P_ITEM_ID_AT_WEEK or "").strip()
+
+    value_sql = "NULL" if P_VALUE is None else str(int(P_VALUE))
+
+    # 1) Save
+    session.sql(f"""
+      CALL DJUS_ML_SANDBOX.PUBLIC.SP_LADDER_AUTOSAVE_CELL_PY(
+        '{esc(retailer)}',
+        '{esc(retailer_item_id)}',
+        '{esc(item_id_at_week)}',
+        TO_DATE('{P_WEEK_ENDING}'),
+        '{esc(P_FIELD_NAME)}',
+        {value_sql},
+        '{esc(P_UPDATED_BY)}'
+      )
+    """).collect()
+
+    # 2) Locate retail year/week for edited cell
+    key_rows = session.sql(f"""
+      SELECT RETAIL_YEAR, RETAIL_WEEK
+      FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_BI_UI
+      WHERE RETAILER = '{esc(retailer)}'
+        AND RETAILER_ITEM_ID = '{esc(retailer_item_id)}'
+        AND ITEM_ID_AT_WEEK = '{esc(item_id_at_week)}'
+        AND WEEK_ENDING = TO_DATE('{P_WEEK_ENDING}')
+      QUALIFY ROW_NUMBER() OVER (ORDER BY WEEK_ENDING) = 1
+    """).collect()
+
+    if not key_rows:
+        return {"status":"error","message":"No matching row found in LADDER_PLAN_BI_UI for that key/week."}
+
+    ry = int(key_rows[0]["RETAIL_YEAR"])
+    rw = int(key_rows[0]["RETAIL_WEEK"])
+    start_week = max(rw - 2, 1)
+    end_week = rw + 12
+
+    # 3) Fetch slice
+    rows = session.sql(f"""
+      SELECT *
+      FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_BI_UI
+      WHERE RETAILER = '{esc(retailer)}'
+        AND RETAILER_ITEM_ID = '{esc(retailer_item_id)}'
+        AND ITEM_ID_AT_WEEK = '{esc(item_id_at_week)}'
+        AND RETAIL_YEAR = {ry}
+        AND RETAIL_WEEK BETWEEN {start_week} AND {end_week}
+      ORDER BY RETAIL_YEAR, RETAIL_WEEK
+    """).collect()
+
+    return {
+      "status":"ok",
+      "retail_year": ry,
+      "retail_week": rw,
+      "slice_start_week": start_week,
+      "slice_end_week": end_week,
+      "rows": [r.asDict(recursive=True) for r in rows]
+    }
+$$;
