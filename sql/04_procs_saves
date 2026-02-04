@@ -1,0 +1,95 @@
+USE ROLE SYSADMIN;
+USE DATABASE DJUS_ML_SANDBOX;
+USE SCHEMA PUBLIC;
+
+CREATE OR REPLACE PROCEDURE SP_LADDER_AUTOSAVE_CELL_PY(
+  P_RETAILER           STRING,
+  P_RETAILER_ITEM_ID   STRING,
+  P_ITEM_ID_AT_WEEK    STRING,
+  P_WEEK_ENDING        DATE,
+  P_FIELD_NAME         STRING,
+  P_VALUE              NUMBER,
+  P_UPDATED_BY         STRING
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.9'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+from snowflake.snowpark import Session
+
+ALLOWED_FIELDS = {"PLAN_UNITS", "SUGGESTED_PLAN_UNITS"}
+
+def esc(val):
+    return (val or "").replace("'", "''")
+
+def get_active_scenario(session: Session) -> str:
+    rows = session.sql("""
+      SELECT SCENARIO_CODE
+      FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_SCENARIO_CONFIG
+      WHERE IS_ACTIVE = TRUE
+      QUALIFY ROW_NUMBER() OVER (ORDER BY CREATED_AT DESC) = 1
+    """).collect()
+    return rows[0][0] if rows else "FY2026"
+
+def run(session: Session,
+        P_RETAILER,
+        P_RETAILER_ITEM_ID,
+        P_ITEM_ID_AT_WEEK,
+        P_WEEK_ENDING,
+        P_FIELD_NAME,
+        P_VALUE,
+        P_UPDATED_BY):
+
+    retailer = (P_RETAILER or "").strip()
+    retailer_item_id = (P_RETAILER_ITEM_ID or "").strip()
+    item_id_at_week = (P_ITEM_ID_AT_WEEK or "").strip()
+    field = (P_FIELD_NAME or "").strip().upper()
+
+    if field not in ALLOWED_FIELDS:
+        return {"status":"error","message":"Invalid field_name","field_name":field}
+
+    if not retailer or not retailer_item_id or not item_id_at_week or P_WEEK_ENDING is None:
+        return {"status":"error","message":"Missing required key fields."}
+
+    scenario = get_active_scenario(session)
+    value_sql = "NULL" if P_VALUE is None else str(int(P_VALUE))
+
+    merge_sql = f"""
+MERGE INTO DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_OVERRIDES tgt
+USING (
+  SELECT
+    '{esc(retailer)}'         AS RETAILER,
+    '{esc(retailer_item_id)}' AS RETAILER_ITEM_ID,
+    '{esc(item_id_at_week)}'  AS ITEM_ID_AT_WEEK,
+    TO_DATE('{P_WEEK_ENDING}') AS WEEK_ENDING,
+    '{esc(scenario)}'         AS SCENARIO
+) src
+ON  tgt.RETAILER         = src.RETAILER
+AND tgt.RETAILER_ITEM_ID = src.RETAILER_ITEM_ID
+AND tgt.ITEM_ID_AT_WEEK  = src.ITEM_ID_AT_WEEK
+AND tgt.WEEK_ENDING      = src.WEEK_ENDING
+AND tgt.SCENARIO         = src.SCENARIO
+WHEN MATCHED THEN UPDATE SET
+  PLAN_UNITS           = CASE WHEN '{field}'='PLAN_UNITS' THEN {value_sql} ELSE tgt.PLAN_UNITS END,
+  SUGGESTED_PLAN_UNITS = CASE WHEN '{field}'='SUGGESTED_PLAN_UNITS' THEN {value_sql} ELSE tgt.SUGGESTED_PLAN_UNITS END,
+  UPDATED_BY           = '{esc(P_UPDATED_BY)}',
+  UPDATED_AT           = CURRENT_TIMESTAMP
+WHEN NOT MATCHED THEN INSERT (
+  RETAILER, RETAILER_ITEM_ID, ITEM_ID_AT_WEEK, WEEK_ENDING, SCENARIO,
+  PLAN_UNITS, SUGGESTED_PLAN_UNITS,
+  UPDATED_BY, UPDATED_AT
+) VALUES (
+  src.RETAILER, src.RETAILER_ITEM_ID, src.ITEM_ID_AT_WEEK, src.WEEK_ENDING, src.SCENARIO,
+  CASE WHEN '{field}'='PLAN_UNITS' THEN {value_sql} ELSE NULL END,
+  CASE WHEN '{field}'='SUGGESTED_PLAN_UNITS' THEN {value_sql} ELSE NULL END,
+  '{esc(P_UPDATED_BY)}', CURRENT_TIMESTAMP
+);
+"""
+    session.sql(merge_sql).collect()
+
+    return {"status":"ok","scenario":scenario,"field":field,"value":None if P_VALUE is None else int(P_VALUE)}
+$$;
