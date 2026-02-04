@@ -1,0 +1,225 @@
+/* ============================================================
+   Phase 2 – Procedures
+   Step 4: Autosave + Ripple-safe Slice Fetch
+
+   Requires:
+     - DJUS_ML_SANDBOX.LADDER_APP.LADDER_PLAN_OVERRIDES
+     - DJUS_ML_SANDBOX.LADDER_APP.LADDER_PLAN_BI_UI
+
+   Notes:
+     - Receipts use LEAD(..., 2), so editing week N impacts week N-2.
+     - Inventory chains ripple forward from the earliest impacted week.
+   ============================================================ */
+
+USE ROLE SYSADMIN;
+USE DATABASE DJUS_ML_SANDBOX;
+USE SCHEMA LADDER_APP;
+
+/* ------------------------------------------------------------
+   Proc 1: Autosave a single edited cell
+   ------------------------------------------------------------
+   Parameters:
+     p_field_name must be 'PLAN_UNITS' or 'SUGGESTED_PLAN_UNITS'
+     p_value can be NULL to clear an override (revert to baseline)
+
+   Returns:
+     'OK' on success
+------------------------------------------------------------ */
+
+CREATE OR REPLACE PROCEDURE SP_LADDER_AUTOSAVE_CELL(
+  p_retailer         STRING,
+  p_retailer_item_id STRING,
+  p_item_id_at_week  STRING,
+  p_week_ending      DATE,
+  p_field_name       STRING,
+  p_value            NUMBER(38,0),
+  p_updated_by       STRING
+)
+RETURNS STRING
+LANGUAGE SQL
+AS
+$$
+BEGIN
+  IF (UPPER(p_field_name) NOT IN ('PLAN_UNITS', 'SUGGESTED_PLAN_UNITS')) THEN
+    RETURN 'ERROR: p_field_name must be PLAN_UNITS or SUGGESTED_PLAN_UNITS';
+  END IF;
+
+  MERGE INTO LADDER_PLAN_OVERRIDES AS tgt
+  USING (
+    SELECT
+      TRIM(p_retailer)         AS retailer,
+      TRIM(p_retailer_item_id) AS retailer_item_id,
+      TRIM(p_item_id_at_week)  AS item_id_at_week,
+      p_week_ending            AS week_ending,
+      UPPER(p_field_name)      AS field_name,
+      p_value                  AS v,
+      p_updated_by             AS updated_by
+  ) AS src
+  ON  tgt.RETAILER         = src.retailer
+  AND tgt.RETAILER_ITEM_ID = src.retailer_item_id
+  AND tgt.ITEM_ID_AT_WEEK  = src.item_id_at_week
+  AND tgt.WEEK_ENDING      = src.week_ending
+  WHEN MATCHED THEN UPDATE SET
+    tgt.PLAN_UNITS =
+      CASE WHEN src.field_name = 'PLAN_UNITS' THEN src.v ELSE tgt.PLAN_UNITS END,
+    tgt.SUGGESTED_PLAN_UNITS =
+      CASE WHEN src.field_name = 'SUGGESTED_PLAN_UNITS' THEN src.v ELSE tgt.SUGGESTED_PLAN_UNITS END,
+    tgt.UPDATED_AT = CURRENT_TIMESTAMP(),
+    tgt.UPDATED_BY = src.updated_by,
+    tgt.SOURCE_APP = 'LADDER_UI'
+  WHEN NOT MATCHED THEN INSERT (
+    RETAILER, RETAILER_ITEM_ID, ITEM_ID_AT_WEEK, WEEK_ENDING,
+    PLAN_UNITS, SUGGESTED_PLAN_UNITS,
+    UPDATED_AT, UPDATED_BY, SOURCE_APP
+  ) VALUES (
+    src.retailer, src.retailer_item_id, src.item_id_at_week, src.week_ending,
+    CASE WHEN src.field_name = 'PLAN_UNITS' THEN src.v ELSE NULL END,
+    CASE WHEN src.field_name = 'SUGGESTED_PLAN_UNITS' THEN src.v ELSE NULL END,
+    CURRENT_TIMESTAMP(), src.updated_by, 'LADDER_UI'
+  );
+
+  RETURN 'OK';
+END;
+$$;
+
+
+/* ------------------------------------------------------------
+   Proc 2: Autosave + return recalculated slice (29 columns)
+   ------------------------------------------------------------
+   Why this exists:
+     - lets your API do one call per blur event:
+         (write override) + (read recalculated rows)
+     - slice starts at retail_week - 2 to capture LEAD(...,2) impact
+     - returns ONLY same retail_year partition (your math partitions by retail_year)
+
+   Returns:
+     TABLE with the same 29 columns as LADDER_PLAN_BI_UI
+------------------------------------------------------------ */
+
+CREATE OR REPLACE PROCEDURE SP_LADDER_AUTOSAVE_AND_FETCH_SLICE(
+  p_retailer         STRING,
+  p_retailer_item_id STRING,
+  p_item_id_at_week  STRING,
+  p_week_ending      DATE,
+  p_field_name       STRING,
+  p_value            NUMBER(38,0),
+  p_updated_by       STRING
+)
+RETURNS TABLE (
+  RETAILER STRING,
+  RETAILER_ITEM_ID STRING,
+  ITEM_ID_AT_WEEK STRING,
+  ULTRAGROUP_DESC1 STRING,
+  RETAIL_YEAR NUMBER(38,0),
+  RETAIL_WEEK NUMBER(38,0),
+  WEEK_BEG_DATE DATE,
+  WEEK_ENDING DATE,
+  ACTUAL_UNITS_LY NUMBER(38,0),
+  ACTUAL_DOLLARS_LY NUMBER(38,1),
+  ACTUAL_UNIT_INV_LY NUMBER(38,0),
+  ACTUAL_UNITS NUMBER(38,0),
+  ACTUAL_DOLLARS NUMBER(38,1),
+  WEEKLY_FORECAST_UNITS NUMBER(38,0),
+  ACTUAL_UNIT_INV NUMBER(38,0),
+  WHSE_ON_ORDER_UNITS NUMBER(38,0),
+  PLAN_UNITS NUMBER(38,0),
+  SUGGESTED_PLAN_UNITS NUMBER(38,0),
+  PLAN_UNIT_RECEIPTS NUMBER(38,0),
+  SUGGESTED_PLAN_UNIT_RECEIPTS NUMBER(38,0),
+  FORECAST_UNIT_RECEIPTS NUMBER(38,0),
+  TOW NUMBER(38,0),
+  WOS NUMBER(38,6),
+  ITEM_AMOUNT NUMBER(38,6),
+  FORECAST_DOLLARS NUMBER(38,6),
+  START_INV_UNITS_TR3 NUMBER(38,0),
+  PLAN_UNIT_INVENTORY NUMBER(38,0),
+  SUGGESTED_PLAN_UNIT_INVENTORY NUMBER(38,0),
+  FORECAST_UNIT_INVENTORY NUMBER(38,0)
+)
+LANGUAGE SQL
+AS
+$$
+DECLARE
+  v_retail_year NUMBER(38,0);
+  v_retail_week NUMBER(38,0);
+  v_start_week  NUMBER(38,0);
+BEGIN
+  /* 1) Autosave the cell */
+  CALL SP_LADDER_AUTOSAVE_CELL(
+    p_retailer,
+    p_retailer_item_id,
+    p_item_id_at_week,
+    p_week_ending,
+    p_field_name,
+    p_value,
+    p_updated_by
+  );
+
+  /* 2) Find the retail_year + retail_week for the edited week */
+  SELECT
+    retail_year,
+    retail_week
+  INTO
+    v_retail_year,
+    v_retail_week
+  FROM LADDER_PLAN_BI_UI
+  WHERE retailer = TRIM(p_retailer)
+    AND retailer_item_id = TRIM(p_retailer_item_id)
+    AND item_id_at_week = TRIM(p_item_id_at_week)
+    AND week_ending = p_week_ending
+  QUALIFY ROW_NUMBER() OVER (ORDER BY week_ending) = 1;
+
+  /* If no row found (should be rare), fall back safely */
+  IF (v_retail_year IS NULL OR v_retail_week IS NULL) THEN
+    SELECT retail_year, retail_week
+    INTO v_retail_year, v_retail_week
+    FROM DJUS_ML_SANDBOX.PUBLIC.RETAIL_WEEK_DIM_2YR
+    WHERE week_ending = p_week_ending
+    QUALIFY ROW_NUMBER() OVER (ORDER BY week_ending) = 1;
+  END IF;
+
+  /* 3) Start week = edited retail_week - 2 (receipt lead impact), clamp to >= 1 */
+  v_start_week := IFF(v_retail_week - 2 < 1, 1, v_retail_week - 2);
+
+  /* 4) Return recalculated slice (same retail_year partition) */
+  RETURN TABLE (
+    SELECT
+      retailer,
+      retailer_item_id,
+      item_id_at_week,
+      ultragroup_desc1,
+      retail_year,
+      retail_week,
+      week_beg_date,
+      week_ending,
+      actual_units_ly,
+      actual_dollars_ly,
+      actual_unit_inv_ly,
+      actual_units,
+      actual_dollars,
+      weekly_forecast_units,
+      actual_unit_inv,
+      whse_on_order_units,
+      plan_units,
+      suggested_plan_units,
+      plan_unit_receipts,
+      suggested_plan_unit_receipts,
+      forecast_unit_receipts,
+      tow,
+      wos,
+      item_amount,
+      forecast_dollars,
+      start_inv_units_tr3,
+      plan_unit_inventory,
+      suggested_plan_unit_inventory,
+      forecast_unit_inventory
+    FROM LADDER_PLAN_BI_UI
+    WHERE retailer = TRIM(p_retailer)
+      AND retailer_item_id = TRIM(p_retailer_item_id)
+      AND item_id_at_week = TRIM(p_item_id_at_week)
+      AND retail_year = v_retail_year
+      AND retail_week >= v_start_week
+    ORDER BY retail_week
+  );
+END;
+$$;
