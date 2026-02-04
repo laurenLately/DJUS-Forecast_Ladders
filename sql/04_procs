@@ -1,12 +1,3 @@
-/* ============================================================
-   Phase 2 – Procedures
-   Step 4: API-friendly stored procedures (autosave + slice)
-
-   Creates:
-     - SP_LADDER_AUTOSAVE_CELL
-     - SP_LADDER_AUTOSAVE_AND_FETCH_SLICE
-   ============================================================ */
-
 USE ROLE SYSADMIN;
 USE DATABASE DJUS_ML_SANDBOX;
 USE SCHEMA LADDER_APP;
@@ -35,9 +26,9 @@ BEGIN
 
   IF (V_FIELD NOT IN ('PLAN_UNITS', 'SUGGESTED_PLAN_UNITS')) THEN
     RETURN OBJECT_CONSTRUCT(
-      'status', 'error',
-      'message', 'Invalid field_name. Allowed: PLAN_UNITS, SUGGESTED_PLAN_UNITS',
-      'field_name', V_FIELD
+      'status','error',
+      'message','Invalid field_name. Allowed: PLAN_UNITS, SUGGESTED_PLAN_UNITS',
+      'field_name',V_FIELD
     );
   END IF;
 
@@ -71,13 +62,13 @@ BEGIN
   );
 
   RETURN OBJECT_CONSTRUCT(
-    'status', 'ok',
-    'retailer', P_RETAILER,
-    'retailer_item_id', P_RETAILER_ITEM_ID,
-    'item_id_at_week', P_ITEM_ID_AT_WEEK,
-    'week_ending', TO_VARCHAR(P_WEEK_ENDING),
-    'field_name', V_FIELD,
-    'value', P_VALUE
+    'status','ok',
+    'retailer',P_RETAILER,
+    'retailer_item_id',P_RETAILER_ITEM_ID,
+    'item_id_at_week',P_ITEM_ID_AT_WEEK,
+    'week_ending',TO_VARCHAR(P_WEEK_ENDING),
+    'field_name',V_FIELD,
+    'value',P_VALUE
   );
 END;
 $$;
@@ -134,7 +125,7 @@ DECLARE
   V_RETAIL_YEAR INT;
   V_RETAIL_WEEK INT;
 BEGIN
-  -- 1) Persist the edit
+  -- persist the edit
   CALL SP_LADDER_AUTOSAVE_CELL(
     P_RETAILER,
     P_RETAILER_ITEM_ID,
@@ -145,13 +136,13 @@ BEGIN
     P_UPDATED_BY
   );
 
-  -- 2) Find retail_year + retail_week for edited week (from UI view)
+  -- IMPORTANT: INTO targets do NOT use ":" prefixes
   SELECT
     RETAIL_YEAR,
     RETAIL_WEEK
   INTO
-    :V_RETAIL_YEAR,
-    :V_RETAIL_WEEK
+    V_RETAIL_YEAR,
+    V_RETAIL_WEEK
   FROM LADDER_PLAN_BI_UI
   WHERE RETAILER = TRIM(P_RETAILER)
     AND RETAILER_ITEM_ID = TRIM(P_RETAILER_ITEM_ID)
@@ -159,7 +150,6 @@ BEGIN
     AND WEEK_ENDING = P_WEEK_ENDING
   QUALIFY ROW_NUMBER() OVER (ORDER BY WEEK_ENDING) = 1;
 
-  -- If nothing matched, return empty result set (UI can treat as error)
   IF (V_RETAIL_YEAR IS NULL OR V_RETAIL_WEEK IS NULL) THEN
     RETURN TABLE(
       SELECT *
@@ -168,8 +158,6 @@ BEGIN
     );
   END IF;
 
-  -- 3) Return a slice for repaint.
-  -- We start at week-2 to include the receipts ripple window.
   RETURN TABLE(
     SELECT *
     FROM LADDER_PLAN_BI_UI
