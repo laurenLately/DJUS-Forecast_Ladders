@@ -1,0 +1,277 @@
+USE ROLE SYSADMIN;
+USE DATABASE DJUS_ML_SANDBOX;
+USE SCHEMA PUBLIC;
+
+CREATE OR REPLACE VIEW LADDER_PLAN_BI_UI AS
+WITH
+week_dim AS (
+  SELECT
+    scenario_code,
+    retail_year,
+    retail_week,
+    week_beg_date,
+    week_ending
+  FROM V_LADDER_ACTIVE_SCENARIO_WEEKS
+),
+
+items AS (
+  SELECT DISTINCT
+    TRIM(retailer)::STRING AS retailer,
+    TRIM(retailer_item_id)::STRING AS retailer_item_id
+  FROM DJUS_ML_SANDBOX.PUBLIC.TR3_WEEKLY_UNIFIED
+
+  UNION
+
+  SELECT DISTINCT
+    TRIM(retailer)::STRING AS retailer,
+    TRIM(retailer_item_id)::STRING AS retailer_item_id
+  FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_OVERRIDES
+),
+
+skeleton AS (
+  SELECT
+    i.retailer,
+    i.retailer_item_id,
+    w.scenario_code,
+    w.retail_year,
+    w.retail_week,
+    w.week_beg_date,
+    w.week_ending
+  FROM items i
+  CROSS JOIN week_dim w
+),
+
+ov AS (
+  SELECT
+    TRIM(retailer)::STRING AS retailer,
+    TRIM(retailer_item_id)::STRING AS retailer_item_id,
+    TRIM(item_id_at_week)::STRING AS item_id_at_week,
+    TO_DATE(week_ending) AS week_ending,
+    TRIM(scenario)::STRING AS scenario,
+    COALESCE(plan_units, 0) AS plan_units,
+    COALESCE(suggested_plan_units, 0) AS suggested_plan_units
+  FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_OVERRIDES
+),
+
+tr3 AS (
+  SELECT
+    TRIM(retailer)::STRING AS retailer,
+    TRIM(retailer_item_id)::STRING AS retailer_item_id,
+    TRIM(item_id_at_week)::STRING AS item_id_at_week,
+    TO_DATE(week_ending) AS week_ending,
+    retail_year::INT AS retail_year,
+    retail_week::INT AS retail_week,
+
+    COALESCE(actual_units, 0) AS actual_units,
+    COALESCE(actual_dollars_raw, 0) AS actual_dollars_raw,
+    COALESCE(forecast_units, 0) AS forecast_units,
+    COALESCE(on_hand_units, 0) AS on_hand_units,
+    COALESCE(whse_on_order_units, 0) AS whse_on_order_units
+  FROM DJUS_ML_SANDBOX.PUBLIC.TR3_WEEKLY_UNIFIED
+  -- include prior year for LY
+  WHERE retail_year IN (
+    (SELECT MIN(retail_year) - 1 FROM V_LADDER_ACTIVE_SCENARIO_WEEKS),
+    (SELECT MIN(retail_year)     FROM V_LADDER_ACTIVE_SCENARIO_WEEKS),
+    (SELECT MAX(retail_year)     FROM V_LADDER_ACTIVE_SCENARIO_WEEKS)
+  )
+),
+
+base AS (
+  SELECT
+    s.retailer,
+    s.retailer_item_id,
+
+    -- pick item id from TR3 if available, else from overrides (or null)
+    COALESCE(t.item_id_at_week, ov.item_id_at_week) AS item_id_at_week,
+
+    s.retail_year,
+    s.retail_week,
+    s.week_beg_date,
+    s.week_ending,
+
+    COALESCE(ov.plan_units, 0) AS plan_units,
+    COALESCE(ov.suggested_plan_units, 0) AS suggested_plan_units,
+
+    COALESCE(t.actual_units, 0) AS actual_units,
+    COALESCE(t.actual_dollars_raw, 0) AS actual_dollars_raw,
+    COALESCE(t.forecast_units, 0) AS weekly_forecast_units,
+    COALESCE(t.on_hand_units, 0) AS actual_unit_inv,
+    COALESCE(t.whse_on_order_units, 0) AS whse_on_order_units
+
+  FROM skeleton s
+  LEFT JOIN ov
+    ON ov.retailer = s.retailer
+   AND ov.retailer_item_id = s.retailer_item_id
+   AND ov.week_ending = s.week_ending
+   AND ov.scenario = s.scenario_code
+
+  LEFT JOIN tr3 t
+    ON t.retailer = s.retailer
+   AND t.retailer_item_id = s.retailer_item_id
+   AND t.week_ending = s.week_ending
+),
+
+with_ly AS (
+  SELECT
+    b.*,
+    COALESCE(ly.actual_units, 0) AS actual_units_ly,
+    COALESCE(ly.actual_dollars_raw, 0) AS actual_dollars_raw_ly,
+    COALESCE(ly.on_hand_units, 0) AS actual_unit_inv_ly
+  FROM base b
+  LEFT JOIN tr3 ly
+    ON ly.retailer = b.retailer
+   AND ly.retailer_item_id = b.retailer_item_id
+   AND ly.item_id_at_week = b.item_id_at_week
+   AND ly.retail_year = b.retail_year - 1
+   AND ly.retail_week = b.retail_week
+),
+
+with_receipts AS (
+  SELECT
+    w.*,
+
+    LEAD(w.plan_units, 2) OVER (
+      PARTITION BY w.retailer, w.retailer_item_id, w.retail_year
+      ORDER BY w.retail_week
+    ) AS plan_unit_receipts,
+
+    LEAD(w.suggested_plan_units, 2) OVER (
+      PARTITION BY w.retailer, w.retailer_item_id, w.retail_year
+      ORDER BY w.retail_week
+    ) AS suggested_plan_unit_receipts,
+
+    LEAD(w.weekly_forecast_units, 2) OVER (
+      PARTITION BY w.retailer, w.retailer_item_id, w.retail_year
+      ORDER BY w.retail_week
+    ) AS forecast_unit_receipts
+
+  FROM with_ly w
+),
+
+carry_onhand AS (
+  SELECT
+    r.*,
+    LAST_VALUE(r.actual_unit_inv) IGNORE NULLS OVER (
+      PARTITION BY r.retailer, r.retailer_item_id
+      ORDER BY r.week_ending
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS on_hand_asof
+  FROM with_receipts r
+),
+
+with_start_inv AS (
+  SELECT
+    c.*,
+    FIRST_VALUE(c.on_hand_asof) OVER (
+      PARTITION BY c.retailer, c.retailer_item_id, c.retail_year
+      ORDER BY c.retail_week
+      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) AS start_inv_units_tr3
+  FROM carry_onhand c
+),
+
+with_proj_inv AS (
+  SELECT
+    s.*,
+
+    (s.start_inv_units_tr3
+     + SUM(COALESCE(s.plan_unit_receipts, 0) - COALESCE(s.plan_units, 0)) OVER (
+         PARTITION BY s.retailer, s.retailer_item_id, s.retail_year
+         ORDER BY s.retail_week
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+       )
+    ) AS plan_unit_inventory,
+
+    (s.start_inv_units_tr3
+     + SUM(COALESCE(s.suggested_plan_unit_receipts, 0) - COALESCE(s.suggested_plan_units, 0)) OVER (
+         PARTITION BY s.retailer, s.retailer_item_id, s.retail_year
+         ORDER BY s.retail_week
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+       )
+    ) AS suggested_plan_unit_inventory,
+
+    (s.start_inv_units_tr3
+     + SUM(COALESCE(s.forecast_unit_receipts, 0) - COALESCE(s.weekly_forecast_units, 0)) OVER (
+         PARTITION BY s.retailer, s.retailer_item_id, s.retail_year
+         ORDER BY s.retail_week
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+       )
+    ) AS forecast_unit_inventory
+
+  FROM with_start_inv s
+),
+
+final AS (
+  SELECT
+    p.*,
+
+    (CEIL(p.actual_dollars_raw * 10) / 10) AS actual_dollars,
+    (CEIL(p.actual_dollars_raw_ly * 10) / 10) AS actual_dollars_ly,
+
+    CASE
+      WHEN p.actual_units = 0 THEN NULL
+      ELSE (CEIL(p.actual_dollars_raw * 10) / 10) / NULLIF(p.actual_units, 0)
+    END AS item_amount,
+
+    (p.whse_on_order_units + p.actual_unit_inv) AS tow,
+
+    CASE
+      WHEN p.actual_units = 0 THEN NULL
+      ELSE (p.whse_on_order_units + p.actual_unit_inv) / NULLIF(p.actual_units, 0)
+    END AS wos
+  FROM with_proj_inv p
+),
+
+item_master AS (
+  SELECT
+    TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM)) AS dorel_item_key,
+    ultragroup_desc1,
+    ROW_NUMBER() OVER (
+      PARTITION BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
+      ORDER BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
+    ) AS rn
+  FROM djus_jde.public.ODS_F4101_ITEM_MASTER
+)
+
+SELECT
+  f.retailer AS RETAILER,
+  f.retailer_item_id AS RETAILER_ITEM_ID,
+  f.item_id_at_week AS ITEM_ID_AT_WEEK,
+  im.ultragroup_desc1 AS ULTRAGROUP_DESC1,
+  f.retail_year AS RETAIL_YEAR,
+  f.retail_week AS RETAIL_WEEK,
+  f.week_beg_date AS WEEK_BEG_DATE,
+  f.week_ending AS WEEK_ENDING,
+
+  f.actual_units_ly AS ACTUAL_UNITS_LY,
+  f.actual_dollars_ly AS ACTUAL_DOLLARS_LY,
+  f.actual_unit_inv_ly AS ACTUAL_UNIT_INV_LY,
+
+  f.actual_units AS ACTUAL_UNITS,
+  f.actual_dollars AS ACTUAL_DOLLARS,
+  f.weekly_forecast_units AS WEEKLY_FORECAST_UNITS,
+  f.actual_unit_inv AS ACTUAL_UNIT_INV,
+  f.whse_on_order_units AS WHSE_ON_ORDER_UNITS,
+
+  f.plan_units AS PLAN_UNITS,
+  f.suggested_plan_units AS SUGGESTED_PLAN_UNITS,
+  COALESCE(f.plan_unit_receipts, 0) AS PLAN_UNIT_RECEIPTS,
+  COALESCE(f.suggested_plan_unit_receipts, 0) AS SUGGESTED_PLAN_UNIT_RECEIPTS,
+  COALESCE(f.forecast_unit_receipts, 0) AS FORECAST_UNIT_RECEIPTS,
+
+  f.tow AS TOW,
+  f.wos AS WOS,
+  f.item_amount AS ITEM_AMOUNT,
+  CASE WHEN f.item_amount IS NULL THEN NULL ELSE f.weekly_forecast_units * f.item_amount END AS FORECAST_DOLLARS,
+
+  f.start_inv_units_tr3 AS START_INV_UNITS_TR3,
+  f.plan_unit_inventory AS PLAN_UNIT_INVENTORY,
+  f.suggested_plan_unit_inventory AS SUGGESTED_PLAN_UNIT_INVENTORY,
+  f.forecast_unit_inventory AS FORECAST_UNIT_INVENTORY
+
+FROM final f
+LEFT JOIN item_master im
+  ON TRIM(f.item_id_at_week) = im.dorel_item_key
+ AND im.rn = 1
+
+ORDER BY RETAILER, RETAILER_ITEM_ID, RETAIL_YEAR, RETAIL_WEEK;
