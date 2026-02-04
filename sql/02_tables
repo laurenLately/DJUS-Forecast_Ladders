@@ -1,64 +1,28 @@
-/* ============================================================
-   Phase 2 – Tables (Revised)
-   Step 2: Override storage + Sandbox ULTRAGROUP mapping
-
-   Creates:
-     - LADDER_PLAN_OVERRIDES: authoritative autosave overrides
-     - ITEM_MASTER_ULTRAGROUP: skinny mapping for category (ULTRAGROUP_DESC1)
-
-   Notes:
-     - Overrides store only editable fields (math stays in the UI view)
-     - Mapping table removes cross-db runtime dependency on DJUS_JDE
-   ============================================================ */
-
 USE ROLE SYSADMIN;
 USE DATABASE DJUS_ML_SANDBOX;
-USE SCHEMA LADDER_APP;
+USE SCHEMA PUBLIC;
 
-/* ------------------------------------------------------------
-   1) Authoritative overrides table
------------------------------------------------------------- */
-CREATE TABLE IF NOT EXISTS LADDER_PLAN_OVERRIDES (
-  /* --- ladder grain --- */
-  RETAILER                STRING       NOT NULL,
-  RETAILER_ITEM_ID        STRING       NOT NULL,
-  ITEM_ID_AT_WEEK         STRING       NOT NULL,
-  WEEK_ENDING             DATE         NOT NULL,
-
-  /* --- editable fields --- */
-  PLAN_UNITS              NUMBER(38,0),
-  SUGGESTED_PLAN_UNITS    NUMBER(38,0),
-
-  /* --- audit metadata --- */
-  UPDATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-  UPDATED_BY              STRING,
-  SOURCE_APP              STRING        DEFAULT 'LADDER_UI',
-
-  CONSTRAINT PK_LADDER_PLAN_OVERRIDES
-    PRIMARY KEY (RETAILER, RETAILER_ITEM_ID, ITEM_ID_AT_WEEK, WEEK_ENDING)
+CREATE OR REPLACE TABLE LADDER_SCENARIO_CONFIG (
+  SCENARIO_CODE    STRING        NOT NULL,  -- e.g. 'FY2026'
+  START_ANCHOR_DT  DATE          NOT NULL,  -- e.g. '2026-02-01'
+  IS_ACTIVE        BOOLEAN       NOT NULL DEFAULT FALSE,
+  CREATED_AT       TIMESTAMP_NTZ NOT NULL DEFAULT CURRENT_TIMESTAMP(),
+  CREATED_BY       STRING
 );
 
-COMMENT ON TABLE LADDER_PLAN_OVERRIDES IS
-'Authoritative autosaved overrides for ladder PLAN_UNITS and SUGGESTED_PLAN_UNITS. Dependent math is recomputed in LADDER_PLAN_BI_UI.';
+-- Upsert FY2026 and set active (locked snapshot starting Feb 2026)
+MERGE INTO LADDER_SCENARIO_CONFIG t
+USING (
+  SELECT 'FY2026' AS SCENARIO_CODE, TO_DATE('2026-02-01') AS START_ANCHOR_DT
+) s
+ON t.SCENARIO_CODE = s.SCENARIO_CODE
+WHEN MATCHED THEN UPDATE SET
+  START_ANCHOR_DT = s.START_ANCHOR_DT,
+  IS_ACTIVE = TRUE,
+  CREATED_BY = COALESCE(t.CREATED_BY, 'svc_automation')
+WHEN NOT MATCHED THEN INSERT (SCENARIO_CODE, START_ANCHOR_DT, IS_ACTIVE, CREATED_BY)
+VALUES (s.SCENARIO_CODE, s.START_ANCHOR_DT, TRUE, 'svc_automation');
 
-
-/* ------------------------------------------------------------
-   2) Sandbox-local ULTRAGROUP mapping table (skinny copy)
-   Purpose:
-     - Provide ULTRAGROUP_DESC1 (category) without requiring
-       runtime access to DJUS_JDE from SVC_AUTOMATION.
-
-   Build-time dependency:
-     - SYSADMIN (or your build role) must be able to SELECT from
-       DJUS_JDE.PUBLIC.ODS_F4101_ITEM_MASTER to populate this table.
------------------------------------------------------------- */
-CREATE OR REPLACE TABLE ITEM_MASTER_ULTRAGROUP AS
-SELECT
-  TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM)) AS DOREL_ITEM_KEY,
-  ULTRAGROUP_DESC1
-FROM DJUS_JDE.PUBLIC.ODS_F4101_ITEM_MASTER
-QUALIFY ROW_NUMBER() OVER (
-  PARTITION BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
-  ORDER BY TRIM(TO_VARCHAR(LITM_IDENTIFIER2NDITEM))
-) = 1;
-
+-- Ensure only one active scenario
+UPDATE LADDER_SCENARIO_CONFIG
+SET IS_ACTIVE = IFF(SCENARIO_CODE = 'FY2026', TRUE, FALSE);
