@@ -1,7 +1,15 @@
 // api/ladder/index.js
 
 import snowflake from '../_snowflake';
-import { LADDER_COLUMNS } from '../../src/lib/ladderColumnConfig.js'; // If your Functions runtime can't import TS, see note below.
+// api/ladder/index.js
+import { METRIC_ORDER } from './metricOrder.js';
+
+res.status(200).json({
+  rows,
+  meta: {
+    metric_order: METRIC_ORDER
+  }
+});
 
 export default async function handler(req, res) {
   try {
