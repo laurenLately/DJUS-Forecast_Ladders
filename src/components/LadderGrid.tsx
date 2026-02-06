@@ -1,253 +1,183 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { fetchLadder } from "../lib/api";
-import { toGridModel, type LadderGridModel } from "../lib/models";
+// src/components/LadderGrid.tsx
 
-// Map API metric keys to groups + formatting.
-// IMPORTANT: keys must match meta.metric_order and row[metricKey]
-type ColDef = { key: string; label: string; isDollar?: boolean; isPercent?: boolean; isDecimal?: boolean };
+import React, { useEffect, useMemo, useState } from 'react';
+import { LADDER_COLUMNS, LADDER_GROUP_META } from '../lib/ladderColumnConfig';
+import type { LadderRow, LadderResponse } from '../lib/models';
+import { fetchLadder, mergeReturnedSlice, saveCellEdit } from '../lib/api';
+import type { LadderColumnKey } from '../lib/ladderColumns';
 
-type ColGroup = {
-  name: string;
-  color: string;
-  headerColor: string;
-  columns: ColDef[];
+type Props = {
+  retailer?: string;
+  category?: string;
+  retailerItemId?: string;
+  updatedBy?: string; // default svc_automation
+  weekEndingFrom?: string;
+  weekEndingTo?: string;
 };
 
-const columnGroups: ColGroup[] = [
-  {
-    name: "UNITS",
-    color: "bg-blue-100/70",
-    headerColor: "bg-blue-200/80",
-    columns: [
-      { key: "ACTUAL_UNITS_LY", label: "Actual Units LY" },
-      { key: "ACTUAL_UNITS", label: "Actual Units" },
-      { key: "WEEKLY_FORECAST_UNITS", label: "Weekly Forecast" },
-      { key: "PLAN_UNITS", label: "Plan Units" },
-      { key: "SUGGESTED_PLAN_UNITS", label: "Suggested Plan Units" }
-    ]
-  },
-  {
-    name: "DOLLARS",
-    color: "bg-green-100/70",
-    headerColor: "bg-green-200/80",
-    columns: [
-      { key: "ACTUAL_DOLLARS_LY", label: "Actual Dollars LY", isDollar: true },
-      { key: "ACTUAL_DOLLARS", label: "Actual Dollars", isDollar: true },
-      { key: "FORECAST_DOLLARS", label: "Forecast Dollars", isDollar: true }
-    ]
-  },
-  {
-    name: "INVENTORY UNITS",
-    color: "bg-amber-100/60",
-    headerColor: "bg-amber-200/70",
-    columns: [
-      { key: "ACTUAL_UNIT_INV_LY", label: "Actual Unit Inv LY" },
-      { key: "ACTUAL_UNIT_INV", label: "Actual Unit Inv" },
-      { key: "FORECAST_UNIT_INVENTORY", label: "Forecast Unit Inv" },
-      { key: "PLAN_UNIT_INVENTORY", label: "Plan Unit Inv" },
-      { key: "SUGGESTED_PLAN_UNIT_INVENTORY", label: "Suggested Unit Inv" }
-    ]
-  },
-  {
-    name: "RECEIPTS",
-    color: "bg-teal-100/60",
-    headerColor: "bg-teal-200/70",
-    columns: [
-      { key: "FORECAST_UNIT_RECEIPTS", label: "Forecast Receipts Units" },
-      { key: "PLAN_UNIT_RECEIPTS", label: "Plan Receipts Units" },
-      { key: "SUGGESTED_PLAN_UNIT_RECEIPTS", label: "Suggested Receipts Units" }
-    ]
-  },
-  {
-    name: "OTHER METRICS",
-    color: "bg-slate-100/60",
-    headerColor: "bg-slate-200/70",
-    columns: [{ key: "WOS", label: "WOS", isDecimal: true }]
+function formatValue(v: unknown, format?: string) {
+  if (v === null || v === undefined || v === '') return '';
+  const n = typeof v === 'number' ? v : Number(v);
+  if (Number.isFinite(n)) {
+    if (format === 'currency') return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+    if (format === 'decimal') return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    if (format === 'int') return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
-];
-
-function formatValue(
-  value: number | null | string,
-  isDollar?: boolean,
-  isPercent?: boolean,
-  isDecimal?: boolean
-) {
-  if (value === null || value === undefined || value === "") return "";
-  if (typeof value === "string") return value;
-
-  if (isPercent) return `${value.toFixed(0)}%`;
-  if (isDecimal) return value.toFixed(2);
-
-  if (isDollar) {
-    const formatted = Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 0 });
-    return `$${formatted}`;
-  }
-
-  return Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  // date + text fall back
+  return String(v);
 }
 
-function formatWeekBegin(weekEnd: string) {
-  // If weekEnd is YYYY-MM-DD, compute begin = end - 6 days (simple weekly assumption).
-  // If your retail calendar differs, we can replace with an API-provided begin date later.
-  const d = new Date(`${weekEnd}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return "";
-  d.setDate(d.getDate() - 6);
-  return d.toISOString().slice(0, 10);
+function groupSpans() {
+  // compute colspans for the top group header row (Figma-style)
+  const spans: { group: string; span: number }[] = [];
+  for (const col of LADDER_COLUMNS) {
+    const last = spans[spans.length - 1];
+    if (last && last.group === col.group) last.span += 1;
+    else spans.push({ group: col.group, span: 1 });
+  }
+  return spans;
 }
 
-export function LadderGrid({ selection }: { selection: { retailer: string; category: string; retailer_item_id: string } }) {
-  const [grid, setGrid] = useState<LadderGridModel | null>(null);
+export default function LadderGrid({
+  retailer,
+  category,
+  retailerItemId,
+  updatedBy = 'svc_automation',
+  weekEndingFrom,
+  weekEndingTo,
+}: Props) {
+  const [rows, setRows] = useState<LadderRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { retailer, category, retailer_item_id } = selection;
+  const [err, setErr] = useState<string | null>(null);
+
+  const spans = useMemo(groupSpans, []);
 
   useEffect(() => {
-    let cancelled = false;
-
+    // don’t fetch unless minimally filtered (prevents accidental 500k load)
+    if (!retailer || !category) {
+      setRows([]);
+      return;
+    }
     setLoading(true);
-    setError(null);
+    setErr(null);
+    fetchLadder({ retailer, category, retailerItemId, weekEndingFrom, weekEndingTo })
+      .then((r: LadderResponse) => setRows(r.rows ?? []))
+      .catch((e) => setErr(String(e?.message ?? e)))
+      .finally(() => setLoading(false));
+  }, [retailer, category, retailerItemId, weekEndingFrom, weekEndingTo]);
 
-    fetchLadder({ retailer, category, retailer_item_id })
-      .then((resp) => {
-        if (cancelled) return;
-        setGrid(toGridModel(resp));
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e?.message ?? "Failed to load ladder");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
+  async function onBlurSave(row: LadderRow, field: Extract<LadderColumnKey, 'PLAN_UNITS' | 'SUGGESTED_PLAN_UNITS'>, raw: string) {
+    const trimmed = raw.trim();
+    const value = trimmed === '' ? null : Number(trimmed);
+    if (trimmed !== '' && !Number.isFinite(value)) return; // ignore bad input
+
+    try {
+      const resp = await saveCellEdit({
+        retailer: String(row.RETAILER),
+        retailer_item_id: String(row.RETAILER_ITEM_ID),
+        item_id_at_week: (row.ITEM_ID_AT_WEEK ?? null) as any,
+        week_ending: String(row.WEEK_ENDING),
+        field,
+        value,
+        updated_by: updatedBy,
+        // return a window to capture ripple effects (week-2 -> week+12)
+        week_window: {
+          from: String(row.WEEK_BEG_DATE ?? row.WEEK_ENDING),
+          to: String(row.WEEK_ENDING),
+        },
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [retailer, category, retailer_item_id]);
-
-  const allColumns = useMemo(
-    () => columnGroups.flatMap((g) => g.columns),
-    []
-  );
-
-  if (loading) return <div className="p-4 text-sm">Loading ladder…</div>;
-  if (error) return <div className="p-4 text-sm text-red-600">{error}</div>;
-  if (!grid) return <div className="p-4 text-sm">No data</div>;
+      // merge returned slice into current grid
+      setRows((prev) => mergeReturnedSlice(prev, resp.rows ?? []));
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    }
+  }
 
   return (
-    <div className="relative bg-white">
-      <style>{`
-        .excel-table { font-family: 'Calibri', 'Arial', sans-serif; }
-        .excel-table tbody tr:hover td { background-color: rgba(59, 130, 246, 0.05) !important; }
-      `}</style>
+    <div className="w-full">
+      {err && (
+        <div className="mb-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+          {err}
+        </div>
+      )}
 
-      <div className="overflow-x-auto">
-        <table className="excel-table border-collapse" style={{ fontSize: "10px" }}>
-          <thead className="sticky top-0 z-10">
-            {/* Group names row */}
-            <tr className="border-b border-gray-400">
-              {/* Frozen columns */}
-              <th className="bg-gray-100 border-r border-gray-400 px-0.5 py-1" style={{ width: "45px" }} />
-              <th className="bg-gray-100 border-r border-gray-400 px-0.5 py-1" style={{ width: "28px" }} />
-              <th className="bg-gray-100 border-r border-gray-400 px-0.5 py-1" style={{ width: "60px" }} />
-              <th className="bg-gray-100 border-r border-gray-400 px-0.5 py-1" style={{ width: "60px" }} />
-              <th className="bg-gray-100 border-r-2 border-gray-500 px-0.5 py-1" style={{ width: "90px" }} />
-
-              {columnGroups.map((group, idx) => (
-                <th
-                  key={group.name}
-                  className={`${group.headerColor} ${
-                    idx === columnGroups.length - 1 ? "border-r-2 border-gray-500" : "border-r border-gray-400"
-                  } px-2 py-1.5 text-center font-bold text-gray-900`}
-                  colSpan={group.columns.length}
-                  style={{ fontSize: "11px" }}
-                >
-                  {group.name}
-                </th>
-              ))}
+      <div className="rounded-lg border border-slate-200 overflow-auto">
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            {/* Group header row (Figma-like) */}
+            <tr>
+              {spans.map((s, idx) => {
+                const meta = LADDER_GROUP_META[s.group] ?? { label: s.group, className: 'bg-slate-100 text-slate-800' };
+                return (
+                  <th
+                    key={`${s.group}-${idx}`}
+                    colSpan={s.span}
+                    className={`sticky top-0 z-10 border-b border-slate-200 px-2 py-2 text-left font-semibold ${meta.className}`}
+                  >
+                    {meta.label}
+                  </th>
+                );
+              })}
             </tr>
 
-            {/* Column labels row */}
-            <tr className="border-b-2 border-gray-500 bg-gray-50">
-              <th className="bg-gray-100 border-r border-gray-400 px-0.5 py-1" />
-              <th className="bg-gray-100 border-r border-gray-400 px-0.5 py-1 text-center font-semibold text-gray-800" style={{ fontSize: "9px" }}>
-                Wk
-              </th>
-              <th className="bg-gray-100 border-r border-gray-400 px-0 py-1 text-center font-semibold text-gray-800" style={{ fontSize: "9px" }}>
-                WEEK<br />(BEG. DATE)
-              </th>
-              <th className="bg-gray-100 border-r border-gray-400 px-0 py-1 text-center font-semibold text-gray-800" style={{ fontSize: "9px" }}>
-                week<br />(end date)
-              </th>
-              <th className="bg-gray-100 border-r-2 border-gray-500 px-0 py-1" style={{ width: "90px" }} />
-
-              {columnGroups.map((group, groupIdx) =>
-                group.columns.map((col, idx) => (
-                  <th
-                    key={`${group.name}-${col.key}`}
-                    className={`${group.headerColor} ${
-                      idx === group.columns.length - 1 && groupIdx === columnGroups.length - 1
-                        ? "border-r-2 border-gray-500"
-                        : idx === group.columns.length - 1
-                          ? "border-r border-gray-400"
-                          : "border-r border-gray-300"
-                    } px-1.5 py-1 text-center font-semibold text-gray-800 whitespace-nowrap`}
-                    style={{ minWidth: "30px", maxWidth: "140px", fontSize: "8.5px" }}
-                    title={grid.meta.metric_labels?.[col.key] ?? col.label}
-                  >
-                    {grid.meta.metric_labels?.[col.key] ?? col.label}
-                  </th>
-                ))
-              )}
+            {/* Column header row */}
+            <tr>
+              {LADDER_COLUMNS.map((c) => (
+                <th
+                  key={c.key}
+                  className="sticky top-10 z-10 border-b border-slate-200 bg-white px-2 py-2 text-left font-semibold"
+                  style={c.width ? { minWidth: c.width } : undefined}
+                >
+                  {c.label}
+                </th>
+              ))}
             </tr>
           </thead>
 
           <tbody>
-            {grid.data.map((row, rowIndex) => (
-              <tr key={rowIndex} className="border-b border-gray-300">
-                {/* Month column: blank for now (API doesn’t provide month group) */}
-                <td className="bg-white border-r border-gray-400 px-0.5 py-1 text-center font-semibold" style={{ fontSize: "9px" }} />
-
-                <td className="bg-white border-r border-gray-400 px-0.5 py-0.5 text-center" style={{ fontSize: "9px" }}>
-                  {row.week_num ?? ""}
+            {loading ? (
+              <tr>
+                <td colSpan={LADDER_COLUMNS.length} className="px-2 py-6 text-center text-slate-500">
+                  Loading…
                 </td>
-
-                <td className="bg-white border-r border-gray-400 px-0 py-0.5 text-center text-gray-700" style={{ fontSize: "8.5px" }}>
-                  {row.week_end ? formatWeekBegin(String(row.week_end)) : ""}
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={LADDER_COLUMNS.length} className="px-2 py-6 text-center text-slate-500">
+                  Select a retailer + category to load ladder rows.
                 </td>
+              </tr>
+            ) : (
+              rows.map((r, i) => (
+                <tr key={`${r.RETAILER}||${r.RETAILER_ITEM_ID}||${r.WEEK_ENDING}||${i}`} className="odd:bg-slate-50">
+                  {LADDER_COLUMNS.map((c) => {
+                    const val = r[c.key];
 
-                <td className="bg-white border-r border-gray-400 px-0 py-0.5 text-center text-gray-700" style={{ fontSize: "8.5px" }}>
-                  {row.week_end ?? ""}
-                </td>
-
-                {/* Promo/Notes column: blank for now */}
-                <td className="bg-white border-r-2 border-gray-500 px-0 py-0.5 text-left text-gray-700" style={{ fontSize: "8px" }} />
-
-                {columnGroups.map((group, groupIdx) =>
-                  group.columns.map((col, idx) => {
-                    const value = (row as any)[col.key] as number | string | null;
-                    const cellColor = group.color;
+                    if (c.editable && (c.key === 'PLAN_UNITS' || c.key === 'SUGGESTED_PLAN_UNITS')) {
+                      return (
+                        <td key={c.key} className="border-b border-slate-100 px-2 py-1">
+                          <input
+                            className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-right focus:outline-none focus:ring-2 focus:ring-sky-200"
+                            defaultValue={val === null || val === undefined ? '' : String(val)}
+                            onBlur={(e) => onBlurSave(r, c.key, e.target.value)}
+                            inputMode="numeric"
+                          />
+                        </td>
+                      );
+                    }
 
                     return (
-                      <td
-                        key={`${group.name}-${col.key}-${rowIndex}`}
-                        className={`${cellColor} ${
-                          idx === group.columns.length - 1 && groupIdx === columnGroups.length - 1
-                            ? "border-r-2 border-gray-500"
-                            : idx === group.columns.length - 1
-                              ? "border-r border-gray-400"
-                              : "border-r border-gray-300"
-                        } px-1.5 py-0.5 text-right whitespace-nowrap`}
-                        style={{ fontSize: "9.5px" }}
-                      >
-                        {formatValue(value, col.isDollar, col.isPercent, col.isDecimal)}
+                      <td key={c.key} className="border-b border-slate-100 px-2 py-1 text-right tabular-nums">
+                        <span className="block">
+                          {formatValue(val, c.format)}
+                        </span>
                       </td>
                     );
-                  })
-                )}
-              </tr>
-            ))}
+                  })}
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
