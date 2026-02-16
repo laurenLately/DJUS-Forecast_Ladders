@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "snowflake-sdk": "^1.12.0"
+    "axios": "^1.6.8"
   }
 }
