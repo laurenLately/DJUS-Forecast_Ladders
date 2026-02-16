@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { fetchOptions } from "../lib/api";
 import type { LadderOptionsRow } from "../lib/models";
 import { ChevronDown, Loader2, AlertCircle, FileText } from "lucide-react";
 
