@@ -1,52 +1,61 @@
-// api/ladder/index.js
+const { runJobAndGetJson } = require("../shared/databricks");
 
-import snowflake from '../_snowflake';
-// api/ladder/index.js
-import { METRIC_ORDER } from './metricOrder.js';
+// Default action names expected by your Databricks notebook.
+// You can override these in SWA env vars without changing code.
+const ACTION_LADDER = process.env.DATABRICKS_ACTION_LADDER || "ladder";
+const ACTION_CELL = process.env.DATABRICKS_ACTION_CELL || "cell";
+const ACTION_METRIC_ORDER = process.env.DATABRICKS_ACTION_METRIC_ORDER || "metricOrder";
 
-res.status(200).json({
-  rows,
-  meta: {
-    metric_order: METRIC_ORDER
-  }
-});
-
-export default async function handler(req, res) {
-  try {
-    const retailer = req.query.retailer ?? null;
-    const category = req.query.category ?? null;
-    const retailerItemId = req.query.retailer_item_id ?? null;
-    const weekFrom = req.query.week_ending_from ?? null;
-    const weekTo = req.query.week_ending_to ?? null;
-
-    // If your Functions runtime cannot import the TS config above,
-    // replace `SELECT *` with an explicit list and hardcode metric_order below.
-    const sql = `
-      SELECT *
-      FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_BI_UI
-      WHERE (? IS NULL OR RETAILER = ?)
-        AND (? IS NULL OR ULTRAGROUP_DESC1 = ?)
-        AND (? IS NULL OR RETAILER_ITEM_ID = ?)
-        AND (? IS NULL OR WEEK_ENDING >= TO_DATE(?))
-        AND (? IS NULL OR WEEK_ENDING <= TO_DATE(?))
-      ORDER BY RETAILER, RETAILER_ITEM_ID, RETAIL_YEAR, RETAIL_WEEK
-    `;
-
-    const binds = [
-      retailer, retailer,
-      category, category,
-      retailerItemId, retailerItemId,
-      weekFrom, weekFrom,
-      weekTo, weekTo,
-    ];
-
-    const rows = await snowflake.execute(sql, binds);
-
-    // Metric order for the UI (use the same 29-column config)
-    const metric_order = LADDER_COLUMNS.map(c => c.key);
-
-    res.status(200).json({ rows, meta: { metric_order } });
-  } catch (e) {
-    res.status(500).json({ error: String(e?.message ?? e) });
-  }
+// Azure Functions gives you route params via context.bindingData.
+// With route "ladder/{*path}", the remainder will be in bindingData.path.
+function getSubPath(context) {
+  const p = context?.bindingData?.path;
+  if (!p) return "";
+  return String(p).replace(/^\/+/, "").toLowerCase();
 }
+
+module.exports = async function (context, req) {
+  try {
+    const sub = getSubPath(context); // "", "cell", "metricorder", ...
+
+    // Combine query + body into a single parameter bag to forward to Databricks.
+    const params = {
+      ...(req.query || {}),
+      ...(req.body || {}),
+    };
+
+    let action = ACTION_LADDER;
+    if (sub === "cell") action = ACTION_CELL;
+    if (sub === "metricorder" || sub === "metric-order") action = ACTION_METRIC_ORDER;
+
+    const result = await runJobAndGetJson(action, params, {
+      waitSeconds: parseInt(process.env.DATABRICKS_WAIT_SECONDS || "25", 10),
+    });
+
+    // If the job is still running, return 202 with the run id so the UI can poll.
+    if (result && result.__run_id && result.__state && result.__state !== "TERMINATED") {
+      context.res = {
+        status: 202,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(result),
+      };
+      return;
+    }
+
+    context.res = {
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(result ?? {}),
+    };
+  } catch (err) {
+    context.log(err);
+    context.res = {
+      status: 500,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ok: false,
+        error: err?.message || String(err),
+      }),
+    };
+  }
+};
