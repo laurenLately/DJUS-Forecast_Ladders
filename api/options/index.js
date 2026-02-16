@@ -1,27 +1,26 @@
-const { querySnowflake } = require("../shared/snowflake");
+const { runJobAndGetJson } = require("../shared/databricks");
 
-const OPTIONS_SOURCE = "DJUS_ML_SANDBOX.PUBLIC.TR3_RETAIL_ITEM";
+// Your Databricks notebook should interpret an "action" parameter.
+// Default is "options" but you can override per environment.
+const ACTION = process.env.DATABRICKS_ACTION_OPTIONS || "options";
 
 module.exports = async function (context, req) {
   try {
-    const sql = `
-      SELECT DISTINCT
-        RETAILER,
-        ULTRAGROUP_DESC1 AS CATEGORY,
-        RETAILER_ITEM_ID,
-        ITEM_ID_AT_WEEK AS DOREL_ITEM
-      FROM ${OPTIONS_SOURCE}
-      WHERE RETAILER IS NOT NULL
-        AND RETAILER_ITEM_ID IS NOT NULL
-      ORDER BY RETAILER, CATEGORY, RETAILER_ITEM_ID
-    `;
+    // Pass through any filters your notebook supports.
+    const params = {
+      type: req.query.type || req.body?.type || "options",
+      retailer: req.query.retailer || req.body?.retailer || "",
+      category: req.query.category || req.body?.category || ""
+    };
 
-    const rows = await querySnowflake(sql);
+    const result = await runJobAndGetJson(ACTION, params, {
+      waitMs: Number(process.env.DATABRICKS_WAIT_MS || 20000)
+    });
 
     context.res = {
       status: 200,
       headers: { "content-type": "application/json" },
-      body: rows
+      body: result
     };
   } catch (err) {
     context.log.error("options error", {
