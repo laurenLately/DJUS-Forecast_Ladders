@@ -73,3 +73,12 @@ export function mergeReturnedSlice(existing: LadderRow[], returned: LadderRow[])
     return da.localeCompare(db);
   });
 }
+
+export async function fetchoptions(){
+  const res = await fetch("/api/options");
+
+  if (!res.ok){
+    throw new Error('Options API failed(${res.status})');
+  }
+  return res.json();
+}
