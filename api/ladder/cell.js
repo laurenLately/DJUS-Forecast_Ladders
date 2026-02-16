@@ -20,15 +20,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid field' });
     }
 
-    // Call your canonical autosave procedure if it exists (preferred).
-    // If you named it differently, update the CALL below.
+   
     await snowflake.execute(
       `CALL DJUS_ML_SANDBOX.PUBLIC.SP_LADDER_AUTOSAVE_CELL_PY(?, ?, ?, ?, ?, ?, ?)`,
       [retailer, retailer_item_id, item_id_at_week, week_ending, field, value, updated_by]
     );
 
-    // Return refreshed slice (week-2 -> week+12)
-    // NOTE: this assumes WEEK_ENDING is on your retail calendar.
+   
     const sliceSql = `
       SELECT *
       FROM DJUS_ML_SANDBOX.PUBLIC.LADDER_PLAN_BI_UI
