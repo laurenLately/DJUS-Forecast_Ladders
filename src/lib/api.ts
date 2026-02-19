@@ -22,7 +22,7 @@ function qs(params: Record<string, string | undefined>) {
   return s ? `?${s}` : '';
 }
 
-export async function fetchOptions(): Promise<LadderOptionsRow[]>{
+export async function fetchOptions(){
   const res = await fetch('/api/options', { method: 'GET'});
   if (!res.ok) throw new Error ('fetchOptions failed: ${res.status}');
     return res.json();
