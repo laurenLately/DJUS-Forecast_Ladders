@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LadderGrid } from './components/LadderGrid';
+import  LadderGrid  from './components/LadderGrid';
 import { SelectionGate } from './components/SelectionGate';
 import { POSDataGrid } from './components/POSDataGrid';
 import { Download, Save, RefreshCw, Menu, X } from 'lucide-react';
