@@ -6,7 +6,7 @@
       "direction": "in",
       "name": "req",
       "methods": ["get", "post"],
-      "route": "ladder/cell"
+      "route": "ladder/{*path}"
     },
     { "type": "http", "direction": "out", "name": "res" }
   ]
