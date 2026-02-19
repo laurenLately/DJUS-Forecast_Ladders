@@ -76,15 +76,4 @@ export function toGridModel(resp: LadderResponse): LadderGridModel {
 
   return { meta: resp.meta, columns, data };
 }
-// src/lib/models.ts
 
-import type { LadderColumnKey } from './ladderColumns';
-
-export type LadderRow = Record<LadderColumnKey, string | number | null>;
-
-export interface LadderResponse {
-  rows: LadderRow[];
-  meta: {
-    metric_order: LadderColumnKey[];
-  };
-}

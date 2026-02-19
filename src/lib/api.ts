@@ -2,6 +2,7 @@
 
 import type { LadderResponse, LadderRow } from './models';
 import type { LadderColumnKey } from './ladderColumns';
+import type { LadderOptionsRow } from './models';
 
 export type LadderQuery = {
   retailer?: string;
@@ -19,6 +20,12 @@ function qs(params: Record<string, string | undefined>) {
   });
   const s = u.toString();
   return s ? `?${s}` : '';
+}
+
+export async function fetchOptions(): Promise<LadderOptionsRow[]>{
+  const res = await fetch('/api/options', { method: 'GET'});
+  if (!res.ok) throw new Error ('fetchOptions failed: ${res.status}');
+    return res.json();
 }
 
 export async function fetchLadder(q: LadderQuery): Promise<LadderResponse> {
