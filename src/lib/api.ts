@@ -24,7 +24,7 @@ function qs(params: Record<string, string | undefined>) {
 
 export async function fetchOptions(): Promise<LadderOptionsRow[]>{
   const res = await fetch('/api/options', { method: 'GET'});
-  if (!res.ok) throw new Error ('Error('fetchOptions failed: ${res.status}');
+  if (!res.ok) throw new Error ('fetchOptions failed: ${res.status}');
     return res.json();
 }
 
