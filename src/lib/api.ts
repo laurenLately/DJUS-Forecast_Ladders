@@ -4,11 +4,68 @@ import type { LadderResponse, LadderRow } from './models';
 import type { LadderColumnKey } from './ladderColumns';
 import type { LadderOptionsRow } from './models';
 
+// ---------------------------------------------------------------------------
+// Polling helper — handles Databricks 202 / RUNNING responses
+// ---------------------------------------------------------------------------
+
+/** Returns true if the payload looks like a Databricks "still running" response. */
+export function isRunningPayload(data: unknown): boolean {
+  return (
+    data !== null &&
+    typeof data === 'object' &&
+    !Array.isArray(data) &&
+    (data as Record<string, unknown>).__state === 'RUNNING'
+  );
+}
+
+/**
+ * Wraps a fetch call with retry logic for Databricks jobs that return 202 or
+ * a `{ __state: "RUNNING" }` body.  Re-calls the same endpoint until the job
+ * completes or a timeout is reached.
+ *
+ * Linear backoff: 2 s → 3 s → 4 s → 5 s (cap).
+ */
+async function pollForResult<T>(
+  requestFn: () => Promise<Response>,
+  {
+    initialDelayMs = 2000,
+    maxDelayMs = 5000,
+    timeoutMs = 120_000,
+  } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = initialDelayMs;
+
+  while (true) {
+    const res = await requestFn();
+
+    if (!res.ok && res.status !== 202) {
+      throw new Error(`Request failed: ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    if (res.status === 202 || isRunningPayload(data)) {
+      if (Date.now() + delay > deadline) {
+        throw new Error('Request timed out waiting for Databricks job to complete.');
+      }
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay + 1000, maxDelayMs);
+      continue;
+    }
+
+    return data as T;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers
+// ---------------------------------------------------------------------------
+
 export type LadderQuery = {
   retailer?: string;
   category?: string;
   retailerItemId?: string;
-  // week range as ISO date strings: 'YYYY-MM-DD'
   weekEndingFrom?: string;
   weekEndingTo?: string;
 };
@@ -22,36 +79,41 @@ function qs(params: Record<string, string | undefined>) {
   return s ? `?${s}` : '';
 }
 
-export async function fetchOptions(){
-  const res = await fetch('/api/options', { method: 'GET'});
-  if (!res.ok) throw new Error ('fetchOptions failed: ${res.status}');
-    return res.json();
+// ---------------------------------------------------------------------------
+// API functions
+// ---------------------------------------------------------------------------
+
+export async function fetchOptions(): Promise<LadderOptionsRow[]> {
+  const data = await pollForResult<{ ok?: boolean; rows?: LadderOptionsRow[] }>(
+    () => fetch('/api/options', { method: 'GET' }),
+  );
+  return data.rows ?? [];
 }
 
 export async function fetchLadder(q: LadderQuery): Promise<LadderResponse> {
-  const res = await fetch(
-    `/api/ladder${qs({
-      retailer: q.retailer,
-      category: q.category,
-      retailer_item_id: q.retailerItemId,
-      week_ending_from: q.weekEndingFrom,
-      week_ending_to: q.weekEndingTo,
-    })}`,
-    { method: 'GET' }
+  return pollForResult<LadderResponse>(
+    () =>
+      fetch(
+        `/api/ladder${qs({
+          retailer: q.retailer,
+          category: q.category,
+          retailer_item_id: q.retailerItemId,
+          week_ending_from: q.weekEndingFrom,
+          week_ending_to: q.weekEndingTo,
+        })}`,
+        { method: 'GET' },
+      ),
   );
-  if (!res.ok) throw new Error(`fetchLadder failed: ${res.status}`);
-  return res.json();
 }
 
 export type CellEditPayload = {
   retailer: string;
   retailer_item_id: string;
   item_id_at_week?: string | null;
-  week_ending: string; // ISO date
+  week_ending: string;
   field: Extract<LadderColumnKey, 'PLAN_UNITS' | 'SUGGESTED_PLAN_UNITS'>;
   value: number | null;
-  updated_by: string; // svc_automation in your case
-  // optional: return window after edit
+  updated_by: string;
   week_window?: { from: string; to: string };
 };
 
@@ -62,18 +124,25 @@ export async function saveCellEdit(payload: CellEditPayload): Promise<LadderResp
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`saveCellEdit failed: ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  if (isRunningPayload(data)) {
+    throw new Error('Cell save is still processing. Please refresh to see your changes.');
+  }
+  return data;
 }
 
+// ---------------------------------------------------------------------------
+// Merge helper
+// ---------------------------------------------------------------------------
+
 /**
- * Helper to patch rows in memory after a returned slice comes back.
- * Uses identity key: retailer + retailer_item_id + week_ending
+ * Patch rows in memory after a returned slice comes back.
+ * Identity key: retailer + retailer_item_id + week_ending
  */
 export function mergeReturnedSlice(existing: LadderRow[], returned: LadderRow[]): LadderRow[] {
   const key = (r: LadderRow) => `${r.RETAILER}||${r.RETAILER_ITEM_ID}||${r.WEEK_ENDING}`;
-  const map = new Map(existing.map(r => [key(r), r]));
-  returned.forEach(r => map.set(key(r), r));
-  // preserve ordering by WEEK_ENDING if possible
+  const map = new Map(existing.map((r) => [key(r), r]));
+  returned.forEach((r) => map.set(key(r), r));
   return Array.from(map.values()).sort((a, b) => {
     const da = String(a.WEEK_ENDING);
     const db = String(b.WEEK_ENDING);
