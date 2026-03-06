@@ -22,7 +22,12 @@ export function SelectionGate({ onSubmit }: Props) {
     setErr(null);
 
     fetchOptions()
-      .then((rows) => setOptions(rows))
+      .then((rows) => {
+        if (!Array.isArray(rows)) {
+          throw new Error("Unexpected response from options API");
+        }
+        setOptions(rows);
+      })
       .catch((e) => setErr(e?.message ?? "Failed to load options"))
       .finally(() => setLoading(false));
   }, []);
