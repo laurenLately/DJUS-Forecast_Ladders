@@ -4,6 +4,7 @@ const { runJobAndGetJson } = require("../shared/databricks");
 // You can override these in SWA env vars without changing code.
 const ACTION_LADDER = process.env.DATABRICKS_ACTION_LADDER || "ladder";
 const ACTION_CELL = process.env.DATABRICKS_ACTION_CELL || "cell";
+const ACTION_OPTIONS = process.env.DATABRICKS_ACTION_OPTIONS || "options";
 const ACTION_METRIC_ORDER = process.env.DATABRICKS_ACTION_METRIC_ORDER || "metricOrder";
 
 // Azure Functions gives you route params via context.bindingData.
@@ -26,6 +27,7 @@ module.exports = async function (context, req) {
 
     let action = ACTION_LADDER;
     if (sub === "cell") action = ACTION_CELL;
+    if (sub === "options") action = ACTION_OPTIONS;
     if (sub === "metricorder" || sub === "metric-order") action = ACTION_METRIC_ORDER;
 
     const result = await runJobAndGetJson(action, params, {

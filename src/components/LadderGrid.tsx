@@ -61,7 +61,12 @@ export default function LadderGrid({
     setLoading(true);
     setErr(null);
     fetchLadder({ retailer, category, retailerItemId, weekEndingFrom, weekEndingTo })
-      .then((r: LadderResponse) => setRows(r.rows ?? []))
+      .then((r: LadderResponse) => {
+        if (!r || !Array.isArray(r.rows)) {
+          throw new Error("Unexpected response from ladder API");
+        }
+        setRows(r.rows);
+      })
       .catch((e) => setErr(String(e?.message ?? e)))
       .finally(() => setLoading(false));
   }, [retailer, category, retailerItemId, weekEndingFrom, weekEndingTo]);

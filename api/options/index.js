@@ -14,13 +14,23 @@ module.exports = async function (context, req) {
     };
 
     const result = await runJobAndGetJson(ACTION, params, {
-      waitMs: Number(process.env.DATABRICKS_WAIT_MS || 20000)
+      waitSeconds: Number(process.env.DATABRICKS_WAIT_SECONDS || 25),
     });
+
+    // If the job is still running, return 202 with the run id so the UI can poll.
+    if (result && result.__run_id && result.__state && result.__state !== "TERMINATED") {
+      context.res = {
+        status: 202,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(result),
+      };
+      return;
+    }
 
     context.res = {
       status: 200,
       headers: { "content-type": "application/json" },
-      body: result
+      body: result,
     };
   } catch (err) {
     context.log.error("options error", {
