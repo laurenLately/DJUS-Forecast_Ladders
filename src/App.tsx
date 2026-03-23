@@ -177,7 +177,14 @@ export default function App() {
 
       {/* Grid */}
       <div className="flex-1 overflow-auto">
-        {currentScreen === 'ladder' ? <LadderGrid selection={filters} /> : <POSDataGrid />}
+        {currentScreen === 'ladder' ? (
+          <LadderGrid selection={filters} />
+        ) : (
+          <POSDataGrid
+            retailer={filters.retailer}
+            retailerItemId={filters.retailer_item_id}
+          />
+        )}
       </div>
     </div>
   );
