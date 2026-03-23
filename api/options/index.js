@@ -1,19 +1,20 @@
 const { runJobAndGetJson } = require("../shared/databricks");
 
-// Your Databricks notebook should interpret an "action" parameter.
-// Default is "options" but you can override per environment.
-const ACTION = process.env.DATABRICKS_ACTION_OPTIONS || "options";
+// Action name sent to the notebook's action widget.
+const ACTION = process.env.DATABRICKS_ACTION_OPTIONS || "options_get";
+
+// Optional dedicated job ID for a serverless cluster (falls back to shared job).
+const OPTIONS_JOB_ID = process.env.DATABRICKS_OPTIONS_JOB_ID || undefined;
 
 module.exports = async function (context, req) {
   try {
-    // Pass through any filters your notebook supports.
     const params = {
-      type: req.query.type || req.body?.type || "options",
       retailer: req.query.retailer || req.body?.retailer || "",
-      category: req.query.category || req.body?.category || ""
+      category: req.query.category || req.body?.category || "",
     };
 
     const result = await runJobAndGetJson(ACTION, params, {
+      jobId: OPTIONS_JOB_ID,
       waitSeconds: Number(process.env.DATABRICKS_WAIT_SECONDS || 25),
     });
 
