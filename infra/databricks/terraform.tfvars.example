@@ -1,2 +1,4 @@
-databricks_host = "https://adb-xxxxxxxxxxxxxxxx.xx.azuredatabricks.net"
-environment     = "dev"
+databricks_host      = "https://adb-xxxxxxxxxxxxxxxx.xx.azuredatabricks.net"
+environment          = "dev"
+existing_cluster_id  = "xxxx-xxxxxx-xxxxxxxx"
+ladder_notebook_path = "/Shared/ladder_api_router"
