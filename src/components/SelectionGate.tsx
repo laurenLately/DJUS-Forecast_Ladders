@@ -4,7 +4,53 @@ import type { ClusterStatus } from "../lib/api";
 import type { LadderOptionsRow } from "../lib/models";
 import { ChevronDown, Loader2, AlertCircle, FileText, Wifi, WifiOff } from "lucide-react";
 
-const RETAILERS = ["Amazon", "Target", "Walmart"];
+const RETAILERS = ["Amazon", "Target", "Walmart US"];
+
+const CATEGORIES: Record<string, string[]> = {
+  Amazon: [
+    "CARSEATS",
+    "CONNECTED PRODUCTS",
+    "HOME EQUIPMENT",
+    "HOME SAFETY & INFANT HEALTH",
+    "JUVENILE FURNITURE",
+    "NURSERY FEEDING",
+    "STROLLERS",
+    "TOYS & ARTS",
+    "TRAVEL SYSTEMS",
+  ],
+  Target: [
+    "CARSEATS",
+    "CONNECTED PRODUCTS",
+    "HOME EQUIPMENT",
+    "HOME SAFETY & INFANT HEALTH",
+    "JUVENILE FURNITURE",
+    "STROLLERS",
+    "TOYS & ARTS",
+    "TRAVEL SYSTEMS",
+  ],
+  "Walmart US": [
+    "AV & Entertainment",
+    "Bedroom",
+    "CARSEATS",
+    "CONNECTED PRODUCTS",
+    "FIREPLACES",
+    "Folding Indoor Furniture",
+    "GAMING",
+    "HOME EQUIPMENT",
+    "HOME SAFETY & INFANT HEALTH",
+    "JUVENILE FURNITURE",
+    "Kitchen",
+    "Living Room",
+    "Nursery",
+    "Office",
+    "Step Stools and Ladders",
+    "Storage",
+    "STROLLERS",
+    "TOYS & ARTS",
+    "TRAVEL SYSTEMS",
+    "YOUTH ACTIVITY",
+  ],
+};
 
 type Props = {
   onSubmit: (sel: { retailer: string; category: string; retailer_item_id: string }) => void;
@@ -58,9 +104,13 @@ export function SelectionGate({ onSubmit }: Props) {
     }
   }, []);
 
-  // Fetch categories + items when retailer changes.
+  // Categories are static — derived from the CATEGORIES lookup.
+  const categories = useMemo(() => CATEGORIES[retailer] ?? [], [retailer]);
+
+  // Fetch items when retailer + category changes.
+  // The API now requires BOTH retailer and category and returns only matching items.
   useEffect(() => {
-    if (!retailer) {
+    if (!retailer || !category) {
       setOptions([]);
       setErr(null);
       return;
@@ -69,38 +119,28 @@ export function SelectionGate({ onSubmit }: Props) {
     setLoading(true);
     setErr(null);
 
-    fetchOptions(retailer)
+    fetchOptions(retailer, category)
       .then((rows) => {
         if (!Array.isArray(rows)) {
           throw new Error("Unexpected response from options API");
         }
         setOptions(rows);
-        // If the warm-up hasn't finished yet, mark cluster as ready since we got data.
         setClusterStatus("ready");
       })
       .catch((e) => {
-        setErr(e?.message ?? "Failed to load options");
+        setErr(e?.message ?? "Failed to load items");
         setClusterStatus("error");
       })
       .finally(() => setLoading(false));
-  }, [retailer]);
+  }, [retailer, category]);
 
-  const categories = useMemo(() => {
-    if (!retailer) return [];
-    return Array.from(
-      new Set(options.filter((o) => o.retailer === retailer).map((o) => o.category))
-    ).sort();
-  }, [options, retailer]);
-
+  // The API already filters by retailer + category, so just map to dropdown shape.
   const items = useMemo(() => {
-    if (!retailer || !category) return [];
-    return options
-      .filter((o) => o.retailer === retailer && o.category === category)
-      .map((o) => ({
-        id: o.retailer_item_id,
-        label: o.retailer_item_number || o.retailer_item_id,
-      }));
-  }, [options, retailer, category]);
+    return options.map((o) => ({
+      id: o.retailer_item_id,
+      label: o.retailer_item_number || o.retailer_item_id,
+    }));
+  }, [options]);
 
   const canSubmit = retailer && category && retailer_item_id;
 
@@ -165,13 +205,13 @@ export function SelectionGate({ onSubmit }: Props) {
                 </div>
               </div>
 
-              {/* Category — loaded after retailer selection */}
+              {/* Category — static, available instantly after retailer */}
               <div>
                 <label className="block text-sm text-white mb-2">Category</label>
                 <div className="relative">
                   <select
                     className={`w-full appearance-none border rounded-lg px-4 py-3 pr-10 bg-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
-                      !retailer || loading
+                      !retailer
                         ? "border-white/20 text-slate-400 cursor-not-allowed"
                         : "border-white/20 text-slate-900"
                     }`}
@@ -180,16 +220,10 @@ export function SelectionGate({ onSubmit }: Props) {
                       setCategory(e.target.value);
                       setRetailerItemId("");
                     }}
-                    disabled={!retailer || loading}
+                    disabled={!retailer}
                   >
                     <option value="">
-                      {!retailer
-                        ? "Select a retailer first"
-                        : loading
-                          ? "Loading categories\u2026"
-                          : err
-                            ? "Failed to load"
-                            : "Select a category\u2026"}
+                      {!retailer ? "Select a retailer first" : "Select a category\u2026"}
                     </option>
                     {categories.map((c) => (
                       <option key={c} value={c}>
@@ -197,44 +231,37 @@ export function SelectionGate({ onSubmit }: Props) {
                       </option>
                     ))}
                   </select>
-                  {loading && retailer ? (
-                    <Loader2
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 animate-spin pointer-events-none"
-                      size={20}
-                    />
-                  ) : (
-                    <ChevronDown
-                      className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
-                        !retailer ? "text-slate-300" : "text-slate-400"
-                      }`}
-                      size={20}
-                    />
-                  )}
+                  <ChevronDown
+                    className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
+                      !retailer ? "text-slate-300" : "text-slate-400"
+                    }`}
+                    size={20}
+                  />
                 </div>
-                {err && retailer && (
-                  <div className="flex items-center gap-2 mt-2 text-xs text-red-300">
-                    <AlertCircle size={14} />
-                    <span>{err}</span>
-                  </div>
-                )}
               </div>
 
-              {/* Item */}
+              {/* Item — fetched dynamically after retailer + category */}
               <div>
                 <label className="block text-sm text-white mb-2">Item</label>
                 <div className="relative">
                   <select
                     className={`w-full appearance-none border rounded-lg px-4 py-3 pr-10 bg-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
-                      !retailer || !category
+                      !category || loading
                         ? "border-white/20 text-slate-400 cursor-not-allowed"
                         : "border-white/20 text-slate-900"
                     }`}
                     value={retailer_item_id}
                     onChange={(e) => setRetailerItemId(e.target.value)}
-                    disabled={!retailer || !category}
+                    disabled={!category || loading}
                   >
                     <option value="">
-                      {!retailer || !category ? "Select a category first" : "Select an item\u2026"}
+                      {!category
+                        ? "Select a category first"
+                        : loading
+                          ? "Loading items\u2026"
+                          : err
+                            ? "Failed to load items"
+                            : "Select an item\u2026"}
                     </option>
                     {items.map((i) => (
                       <option key={i.id} value={i.id}>
@@ -242,13 +269,26 @@ export function SelectionGate({ onSubmit }: Props) {
                       </option>
                     ))}
                   </select>
-                  <ChevronDown
-                    className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
-                      !retailer || !category ? "text-slate-300" : "text-slate-400"
-                    }`}
-                    size={20}
-                  />
+                  {loading && category ? (
+                    <Loader2
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 animate-spin pointer-events-none"
+                      size={20}
+                    />
+                  ) : (
+                    <ChevronDown
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${
+                        !category ? "text-slate-300" : "text-slate-400"
+                      }`}
+                      size={20}
+                    />
+                  )}
                 </div>
+                {err && category && (
+                  <div className="flex items-center gap-2 mt-2 text-xs text-red-300">
+                    <AlertCircle size={14} />
+                    <span>{err}</span>
+                  </div>
+                )}
               </div>
 
               {/* Submit Button */}
