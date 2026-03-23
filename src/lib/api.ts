@@ -98,7 +98,9 @@ export type ClusterStatus = 'cold' | 'warming' | 'ready' | 'error';
  */
 export function warmUpCluster(onStatus: (s: ClusterStatus) => void): void {
   onStatus('warming');
-  fetch('/api/options', { method: 'GET' })
+  // Hit the health endpoint (or options with a known combo) to wake the cluster.
+  // We pass a valid retailer+category so the notebook doesn't reject it.
+  fetch('/api/options?retailer=Target&category=STROLLERS', { method: 'GET' })
     .then((res) => {
       onStatus(res.ok || res.status === 202 ? 'ready' : 'error');
     })
@@ -109,8 +111,8 @@ export function warmUpCluster(onStatus: (s: ClusterStatus) => void): void {
 // API functions
 // ---------------------------------------------------------------------------
 
-export async function fetchOptions(retailer?: string): Promise<LadderOptionsRow[]> {
-  const params = retailer ? `?retailer=${encodeURIComponent(retailer)}` : '';
+export async function fetchOptions(retailer: string, category: string): Promise<LadderOptionsRow[]> {
+  const params = `?retailer=${encodeURIComponent(retailer)}&category=${encodeURIComponent(category)}`;
   const data = await pollForResult<{ ok?: boolean; rows?: LadderOptionsRow[] }>(
     () => fetch(`/api/options${params}`, { method: 'GET' }),
   );
