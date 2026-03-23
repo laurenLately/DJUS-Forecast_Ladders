@@ -1,6 +1,6 @@
 // src/lib/api.ts
 
-import type { LadderResponse, LadderRow } from './models';
+import type { LadderResponse, LadderRow, POSResponse } from './models';
 import type { LadderColumnKey } from './ladderColumns';
 import type { LadderOptionsRow } from './models';
 
@@ -108,6 +108,28 @@ export async function fetchOptions(retailer?: string): Promise<LadderOptionsRow[
     () => fetch(`/api/options${params}`, { method: 'GET' }),
   );
   return data.rows ?? [];
+}
+
+export type POSQuery = {
+  retailer: string;
+  retailerItemId?: string;
+  weekEndingFrom?: string;
+  weekEndingTo?: string;
+};
+
+export async function fetchPOS(q: POSQuery): Promise<POSResponse> {
+  return pollForResult<POSResponse>(
+    () =>
+      fetch(
+        `/api/pos${qs({
+          retailer: q.retailer,
+          retailer_item_id: q.retailerItemId,
+          week_ending_from: q.weekEndingFrom,
+          week_ending_to: q.weekEndingTo,
+        })}`,
+        { method: 'GET' },
+      ),
+  );
 }
 
 export async function fetchLadder(q: LadderQuery): Promise<LadderResponse> {

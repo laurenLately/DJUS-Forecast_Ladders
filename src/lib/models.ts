@@ -45,4 +45,25 @@ export type LadderResponse = {
   meta?: LadderMeta;
   error?: string;
 };
+
+/** Row shape from /api/pos (TR3_WEEKLY_UNIFIED) */
+export type POSRow = {
+  RETAILER: string;
+  RETAILER_ITEM_ID: string;
+  ITEM_ID_AT_WEEK?: string | null;
+  RETAIL_YEAR: number;
+  RETAIL_WEEK: number;
+  WEEK_ENDING: string;
+  ACTUAL_UNITS: number;
+  ACTUAL_DOLLARS: number;
+  FORECAST_UNITS: number;
+  ON_HAND_UNITS: number;
+  WHSE_ON_ORDER_UNITS: number;
+};
+
+export type POSResponse = {
+  ok?: boolean;
+  rows: POSRow[];
+  error?: string;
+};
  
