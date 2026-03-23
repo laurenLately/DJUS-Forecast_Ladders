@@ -20,21 +20,25 @@ export function isRunningPayload(data: unknown): boolean {
 
 /**
  * Wraps a fetch call with retry logic for Databricks jobs that return 202 or
- * a `{ __state: "RUNNING" }` body.  Re-calls the same endpoint until the job
- * completes or a timeout is reached.
+ * a `{ __state: "RUNNING" }` body.
  *
- * Linear backoff: 2 s → 3 s → 4 s → 5 s (cap).
+ * IMPORTANT: Each call to requestFn() triggers a NEW Databricks job run on the
+ * backend. So we only retry a limited number of times to avoid flooding the
+ * job queue with duplicate runs. The Azure Function already waits ~25 s
+ * server-side for the job to finish, so one retry is usually enough.
+ *
+ * Linear backoff: 3 s → 5 s → 8 s.
  */
 async function pollForResult<T>(
   requestFn: () => Promise<Response>,
   {
-    initialDelayMs = 2000,
-    maxDelayMs = 5000,
-    timeoutMs = 120_000,
+    initialDelayMs = 3000,
+    maxDelayMs = 8000,
+    maxRetries = 2,
   } = {},
 ): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
   let delay = initialDelayMs;
+  let attempts = 0;
 
   while (true) {
     const res = await requestFn();
@@ -46,11 +50,14 @@ async function pollForResult<T>(
     const data = await res.json();
 
     if (res.status === 202 || isRunningPayload(data)) {
-      if (Date.now() + delay > deadline) {
-        throw new Error('Request timed out waiting for Databricks job to complete.');
+      attempts++;
+      if (attempts > maxRetries) {
+        throw new Error(
+          'Databricks cluster is still starting. Please wait a moment and try again.'
+        );
       }
       await new Promise((r) => setTimeout(r, delay));
-      delay = Math.min(delay + 1000, maxDelayMs);
+      delay = Math.min(delay + 2000, maxDelayMs);
       continue;
     }
 
