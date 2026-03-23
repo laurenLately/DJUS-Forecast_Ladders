@@ -57,5 +57,12 @@
     server: {
       port: 3000,
       open: true,
+      proxy: {
+        '/api': {
+          target: 'https://icy-glacier-0eeed100f.6.azurestaticapps.net',
+          changeOrigin: true,
+          secure: true,
+        },
+      },
     },
   });
