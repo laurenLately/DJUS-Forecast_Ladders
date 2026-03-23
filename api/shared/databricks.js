@@ -99,10 +99,11 @@ async function runJobAndGetResult({
  */
 async function runJobAndGetJson(action, params = {}, opts = {}) {
   const jobId =
+    opts.jobId ||
     process.env.DATABRICKS_JOB_ID ||
     process.env.DATABRICKS_LADDER_JOB_ID ||
     process.env.DATABRICKS_ROUTER_JOB_ID;
- 
+
   if (!jobId) {
     throw new Error(
       "Missing Databricks job id env var. Set DATABRICKS_JOB_ID (recommended)."

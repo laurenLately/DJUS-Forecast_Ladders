@@ -11,3 +11,9 @@ variable "existing_cluster_id" {
   type        = string
   description = "Existing Databricks cluster ID used for placeholder jobs"
 }
+
+variable "ladder_notebook_path" {
+  type        = string
+  description = "Workspace path to the ladder_api_router notebook"
+  default     = "/Shared/ladder_api_router"
+}
