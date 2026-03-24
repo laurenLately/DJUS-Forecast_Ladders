@@ -93,16 +93,16 @@ function qs(params: Record<string, string | undefined>) {
 export type ClusterStatus = 'cold' | 'warming' | 'ready' | 'error';
 
 /**
- * Fire-and-forget call to /api/options to wake the Databricks cluster.
- * Reports status back via the provided callback.
+ * Fire-and-forget ping to wake the main Databricks cluster.
+ * Hits /api/health?warm=true which triggers a lightweight "ping" action
+ * on the main cluster (not serverless). The cluster starts warming so
+ * it's ready by the time the user submits their selection.
  */
 export function warmUpCluster(onStatus: (s: ClusterStatus) => void): void {
   onStatus('warming');
-  // Hit the health endpoint (or options with a known combo) to wake the cluster.
-  // We pass a valid retailer+category so the notebook doesn't reject it.
-  fetch('/api/options?retailer=Target&category=STROLLERS', { method: 'GET' })
+  fetch('/api/health?warm=true', { method: 'GET' })
     .then((res) => {
-      onStatus(res.ok || res.status === 202 ? 'ready' : 'error');
+      onStatus(res.ok ? 'ready' : 'error');
     })
     .catch(() => onStatus('error'));
 }
