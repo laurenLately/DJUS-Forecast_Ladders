@@ -113,10 +113,19 @@ export function warmUpCluster(onStatus: (s: ClusterStatus) => void): void {
 
 export async function fetchOptions(retailer: string, category: string): Promise<LadderOptionsRow[]> {
   const params = `?retailer=${encodeURIComponent(retailer)}&category=${encodeURIComponent(category)}`;
-  const data = await pollForResult<{ ok?: boolean; rows?: LadderOptionsRow[] }>(
+  const data = await pollForResult<{ ok?: boolean; rows?: Record<string, unknown>[] }>(
     () => fetch(`/api/options${params}`, { method: 'GET' }),
   );
-  return data.rows ?? [];
+  // Spark Snowflake connector wraps double-quoted SQL aliases with literal quotes
+  // in the column names (e.g. '"retailer"' instead of 'retailer'). Strip them.
+  const rows = (data.rows ?? []).map((row) => {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) {
+      clean[k.replace(/^"|"$/g, '')] = v;
+    }
+    return clean as unknown as LadderOptionsRow;
+  });
+  return rows;
 }
 
 export type POSQuery = {
