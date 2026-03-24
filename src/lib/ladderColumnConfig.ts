@@ -7,14 +7,9 @@ import { LadderColumn } from './ladderColumns';
  * Keys MUST match Snowflake/view output (uppercase).
  */
 export const LADDER_COLUMNS: LadderColumn[] = [
-  // Identity / time
-  { key: 'RETAILER', label: 'Retailer', group: 'identity', format: 'text', width: 120 },
-  { key: 'RETAILER_ITEM_ID', label: 'Retailer Item', group: 'identity', format: 'text', width: 140 },
-  { key: 'ITEM_ID_AT_WEEK', label: 'Dorel Item', group: 'identity', format: 'text', width: 120 },
-  { key: 'ULTRAGROUP_DESC1', label: 'Category', group: 'identity', format: 'text', width: 160 },
+  // Time (identity cols like RETAILER, ITEM etc. are in the filter bar)
   { key: 'RETAIL_YEAR', label: 'Year', group: 'identity', format: 'int', width: 80 },
   { key: 'RETAIL_WEEK', label: 'Week', group: 'identity', format: 'int', width: 80 },
-  { key: 'WEEK_BEG_DATE', label: 'Week Begin', group: 'identity', format: 'date', width: 120 },
   { key: 'WEEK_ENDING', label: 'Week End', group: 'identity', format: 'date', width: 120 },
 
   // Actuals
