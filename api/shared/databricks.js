@@ -34,31 +34,51 @@ async function runJobAndGetResult({
   waitSeconds = Number(process.env.DATABRICKS_WAIT_SECONDS || 20),
 }) {
   const client = databricksClient();
- 
-  const { data: runNow } = await client.post("/jobs/run-now", {
-    job_id: Number(jobId),
-    notebook_params: notebookParams,
-  });
- 
-  const runId = runNow.run_id;
-  const deadline = Date.now() + waitSeconds * 1000;
- 
-  while (Date.now() < deadline) {
-    const { data: run } = await client.get("/jobs/runs/get", {
-      params: { run_id: runId },
+
+  let runId;
+  try {
+    const { data: runNow } = await client.post("/jobs/run-now", {
+      job_id: Number(jobId),
+      notebook_params: notebookParams,
     });
- 
+    runId = runNow.run_id;
+  } catch (e) {
+    const detail = e?.response?.data || e?.message || String(e);
+    throw new Error(`[run-now] ${JSON.stringify(detail)}`);
+  }
+
+  const deadline = Date.now() + waitSeconds * 1000;
+
+  while (Date.now() < deadline) {
+    let run;
+    try {
+      const resp = await client.get("/jobs/runs/get", {
+        params: { run_id: runId },
+      });
+      run = resp.data;
+    } catch (e) {
+      const detail = e?.response?.data || e?.message || String(e);
+      throw new Error(`[runs/get run=${runId}] ${JSON.stringify(detail)}`);
+    }
+
     const state = run?.state;
     if (
       state?.life_cycle_state === "TERMINATED" ||
       state?.life_cycle_state === "INTERNAL_ERROR"
     ) {
-      const { data: out } = await client.get("/jobs/runs/get-output", {
-        params: { run_id: runId },
-      });
- 
+      let out;
+      try {
+        const resp = await client.get("/jobs/runs/get-output", {
+          params: { run_id: runId },
+        });
+        out = resp.data;
+      } catch (e) {
+        const detail = e?.response?.data || e?.message || String(e);
+        throw new Error(`[runs/get-output run=${runId}] ${JSON.stringify(detail)}`);
+      }
+
       const notebookOutput = out?.notebook_output?.result;
- 
+
       if (state?.result_state !== "SUCCESS") {
         const msg =
           out?.error ||
@@ -69,7 +89,7 @@ async function runJobAndGetResult({
         err.databricks = { runId, state, output: notebookOutput };
         throw err;
       }
- 
+
       let parsed = notebookOutput;
       if (typeof notebookOutput === "string") {
         try {
@@ -78,13 +98,13 @@ async function runJobAndGetResult({
           /* keep raw */
         }
       }
- 
+
       return { status: "SUCCESS", runId, result: parsed };
     }
- 
+
     await sleep(800);
   }
- 
+
   return { status: "RUNNING", runId };
 }
  
