@@ -116,12 +116,12 @@ export async function fetchOptions(retailer: string, category: string): Promise<
   const data = await pollForResult<{ ok?: boolean; rows?: Record<string, unknown>[] }>(
     () => fetch(`/api/options${params}`, { method: 'GET' }),
   );
-  // Spark Snowflake connector wraps double-quoted SQL aliases with literal quotes
-  // in the column names (e.g. '"retailer"' instead of 'retailer'). Strip them.
+  // Normalise column names: strip embedded quotes and lowercase to match
+  // the LadderOptionsRow type (Snowflake returns UPPER or "quoted" keys).
   const rows = (data.rows ?? []).map((row) => {
     const clean: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(row)) {
-      clean[k.replace(/^"|"$/g, '')] = v;
+      clean[k.replace(/^"|"$/g, '').toLowerCase()] = v;
     }
     return clean as unknown as LadderOptionsRow;
   });
