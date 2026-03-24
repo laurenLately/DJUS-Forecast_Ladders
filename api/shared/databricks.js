@@ -66,15 +66,22 @@ async function runJobAndGetResult({
       state?.life_cycle_state === "TERMINATED" ||
       state?.life_cycle_state === "INTERNAL_ERROR"
     ) {
+      // Multi-task jobs require fetching output from the individual task run,
+      // not the top-level job run. Find the task run ID from the tasks array.
+      let outputRunId = runId;
+      if (Array.isArray(run.tasks) && run.tasks.length > 0) {
+        outputRunId = run.tasks[0].run_id;
+      }
+
       let out;
       try {
         const resp = await client.get("/jobs/runs/get-output", {
-          params: { run_id: runId },
+          params: { run_id: outputRunId },
         });
         out = resp.data;
       } catch (e) {
         const detail = e?.response?.data || e?.message || String(e);
-        throw new Error(`[runs/get-output run=${runId}] ${JSON.stringify(detail)}`);
+        throw new Error(`[runs/get-output run=${outputRunId}] ${JSON.stringify(detail)}`);
       }
 
       const notebookOutput = out?.notebook_output?.result;
