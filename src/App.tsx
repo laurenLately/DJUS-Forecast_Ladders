@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import  LadderGrid  from './components/LadderGrid';
 import { SelectionGate } from './components/SelectionGate';
 import { POSDataGrid } from './components/POSDataGrid';
-import { Download, Save, RefreshCw, Menu, X } from 'lucide-react';
+import { Download, Save, RefreshCw, Menu, X, ArrowLeft } from 'lucide-react';
 
 export default function App() {
   const [filters, setFilters] = useState({
@@ -56,48 +56,38 @@ export default function App() {
           <div className="flex-1 overflow-y-auto p-6">
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Retailer</label>
-                <select 
-                  className="w-full text-sm border border-gray-300 rounded px-3 py-2 bg-white"
-                  value={filters.retailer}
-                  onChange={(e) => setFilters({ ...filters, retailer: e.target.value })}
-                >
-                  <option>Target</option>
-                  <option>Walmart</option>
-                  <option>Amazon</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Category</label>
-                <select 
-                  className="w-full text-sm border border-gray-300 rounded px-3 py-2 bg-white"
-                  value={filters.category}
-                  onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                >
-                  <option>Furniture</option>
-                  <option>Bedding</option>
-                  <option>Decor</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Item</label>
-                <select 
-                  className="w-full text-sm border border-gray-300 rounded px-3 py-2 bg-white"
-                  value={filters.retailer_item_id}
-                  onChange={(e) => setFilters({ ...filters, item: e.target.value })}
-                >
-                  <option>All Items</option>
-                  <option>Item 001</option>
-                  <option>Item 002</option>
-                </select>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Current Selection</label>
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Retailer</span>
+                    <span className="font-semibold text-gray-800">{filters.retailer}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Category</span>
+                    <span className="font-semibold text-gray-800">{filters.category}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Item</span>
+                    <span className="font-semibold text-gray-800">{filters.retailer_item_id}</span>
+                  </div>
+                </div>
               </div>
 
               <div className="pt-4 border-t border-gray-200">
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Fiscal Year</label>
                 <div className="text-sm text-gray-600">FY 2026</div>
               </div>
+
+              <button
+                className="w-full mt-4 px-4 py-2.5 text-sm bg-[#0e698c] text-white rounded-lg hover:bg-[#0c5a78] flex items-center justify-center gap-2"
+                onClick={() => {
+                  setFilters({ retailer: "", category: "", retailer_item_id: "" });
+                  setMenuOpen(false);
+                }}
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Change Selection
+              </button>
             </div>
           </div>
         </div>
@@ -178,7 +168,11 @@ export default function App() {
       {/* Grid */}
       <div className="flex-1 overflow-auto">
         {currentScreen === 'ladder' ? (
-          <LadderGrid selection={filters} />
+          <LadderGrid
+            retailer={filters.retailer}
+            category={filters.category}
+            retailerItemId={filters.retailer_item_id}
+          />
         ) : (
           <POSDataGrid
             retailer={filters.retailer}
